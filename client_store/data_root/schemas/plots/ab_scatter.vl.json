@@ -1,0 +1,26 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "description": "Example external Vega-Lite scatter for Lambda MX unit-cell a vs b. Domains get 10% padding at bind time; lasso selection is handled in the Finch overlay.",
+  "mark": { "type": "point", "filled": true, "size": 80 },
+  "encoding": {
+    "x": {
+      "field": "unit_cell_a",
+      "type": "quantitative",
+      "scale": { "zero": false },
+      "title": "a (Å)"
+    },
+    "y": {
+      "field": "unit_cell_b",
+      "type": "quantitative",
+      "scale": { "zero": false },
+      "title": "b (Å)"
+    },
+    "color": { "field": "space_group", "type": "nominal" },
+    "tooltip": [
+      { "field": "sample_code", "type": "nominal" },
+      { "field": "unit_cell_a", "type": "quantitative" },
+      { "field": "unit_cell_b", "type": "quantitative" }
+    ]
+  },
+  "params": []
+}

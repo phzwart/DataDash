@@ -1,0 +1,182 @@
+id: http://127.0.0.1:8000/schemas/lambda_mx_series.yaml
+name: lambda_mx_series
+title: Lambda MX Pin RO-Crate Schema
+description: >-
+  LinkML schema for pin-level macromolecular crystallography (MX) RO-Crates
+  in the LAMBDA federation model: sample, instrument, experiment runs,
+  autoPROC workflow provenance, and quality metrics flattened for Tiled search.
+license: CC-BY-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+  lambda: https://w3id.org/lambda/
+  lmx: https://example.org/lambda-mx/
+default_prefix: lmx
+default_range: string
+imports:
+  - linkml:types
+
+classes:
+  LambdaMxCollection:
+    description: Collection-level object for a set of Lambda MX pin crates.
+    slots:
+      - id
+      - name
+      - description
+      - schema_uri
+      - record_count
+  LambdaMxPinRecord:
+    description: >-
+      Flattened metadata record for one pin-level Lambda MX RO-Crate,
+      optionally enriched from an autoPROC log sidecar.
+    slots:
+      - id
+      - dataset_uuid
+      - crate_id
+      - crate_path
+      - title
+      - description
+      - sample_code
+      - sample_id
+      - instrument_code
+      - instrument_id
+      - technique
+      - experiment_count
+      - total_images
+      - collection_experiment_code
+      - workflow_code
+      - workflow_type
+      - software_name
+      - software_version
+      - workflow_started_at
+      - resolution
+      - completeness
+      - space_group
+      - unit_cell_a
+      - unit_cell_b
+      - unit_cell_c
+      - unit_cell_alpha
+      - unit_cell_beta
+      - unit_cell_gamma
+      - indexing_confidence
+      - indexed_spots_pct
+      - wavelength_angstrom
+      - cc_half
+      - mean_i_over_sigma
+      - rmerge
+      - multiplicity
+      - sidecar_file
+      - ro_crate_metadata
+      - schema_uri
+      - facility
+      - beamline
+      - modality
+
+slots:
+  id:
+    identifier: true
+    range: string
+  name:
+    range: string
+  description:
+    range: string
+  schema_uri:
+    range: uri
+    description: URI of this LinkML schema (or a facility override).
+  record_count:
+    range: integer
+  dataset_uuid:
+    range: string
+    description: Dataset / crate UUID (lambda:Dataset @id).
+  crate_id:
+    range: string
+  crate_path:
+    range: string
+    description: Relative directory under data_root.
+  title:
+    range: string
+  sample_code:
+    range: string
+    description: Sample / pin code (e.g. EcCc1_MS).
+  sample_id:
+    range: string
+  instrument_code:
+    range: string
+    description: Beamline / instrument code (e.g. AMX).
+  instrument_id:
+    range: string
+  technique:
+    range: string
+  experiment_count:
+    range: integer
+  total_images:
+    range: integer
+    description: Sum of number_of_images across experiment runs.
+  collection_experiment_code:
+    range: string
+    description: Experiment run that produced quality metrics (if any).
+  workflow_code:
+    range: string
+  workflow_type:
+    range: string
+  software_name:
+    range: string
+  software_version:
+    range: string
+  workflow_started_at:
+    range: string
+  resolution:
+    range: float
+    description: High-resolution limit (Å) from quality metrics / final MTZ table.
+    unit: angstrom
+  completeness:
+    range: float
+    description: Overall completeness (%); ellipsoidal preferred when available.
+    unit: percent
+  space_group:
+    range: string
+  unit_cell_a:
+    range: float
+    unit: angstrom
+  unit_cell_b:
+    range: float
+    unit: angstrom
+  unit_cell_c:
+    range: float
+    unit: angstrom
+  unit_cell_alpha:
+    range: float
+    unit: degree
+  unit_cell_beta:
+    range: float
+    unit: degree
+  unit_cell_gamma:
+    range: float
+    unit: degree
+  indexing_confidence:
+    range: float
+  indexed_spots_pct:
+    range: float
+    unit: percent
+  wavelength_angstrom:
+    range: float
+    unit: angstrom
+  cc_half:
+    range: float
+    description: CC(1/2) overall from final processing table.
+  mean_i_over_sigma:
+    range: float
+  rmerge:
+    range: float
+  multiplicity:
+    range: float
+  sidecar_file:
+    range: string
+  ro_crate_metadata:
+    range: string
+  facility:
+    range: string
+  beamline:
+    range: string
+  modality:
+    range: string

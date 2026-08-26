@@ -1,0 +1,554 @@
+# Facility dashboard config (NOT LinkML).
+id: http://127.0.0.1:8000/schemas/lambda_mx_dashboard.yaml
+title: Lambda MX facility dashboard
+description: >-
+  Finch UI layout and plot declarations for Lambda MX pin RO-Crates
+  (EcCc*_MS). Linked to the master LinkML schema via schema_uri.
+  2D charts are Vega-Lite; unit-cell lattice uses Three.js.
+schema_uri: http://127.0.0.1:8000/schemas/lambda_mx_series.yaml
+record_class: LambdaMxPinRecord
+
+hero:
+  title: sample_code
+  subtitle: title
+  badges:
+    - space_group
+    - unit_cell_a
+    - unit_cell_b
+    - unit_cell_c
+    - unit_cell_alpha
+    - unit_cell_beta
+    - unit_cell_gamma
+  facts:
+    - resolution
+    - completeness
+gallery:
+  title: sample_code
+  # No subtitle — long discovery titles are noise on tiles.
+  badges:
+    - space_group
+  show_id: true
+  cell_line:
+    - { slot: unit_cell_a, label: a }
+    - { slot: unit_cell_b, label: b }
+    - { slot: unit_cell_c, label: c }
+    - { slot: unit_cell_alpha, label: al }
+    - { slot: unit_cell_beta, label: be }
+    - { slot: unit_cell_gamma, label: ga }
+  facts:
+    - { slot: resolution, label: d_min }
+    - { slot: completeness, label: completeness }
+  search_slots:
+    - sample_code
+    - space_group
+    - instrument_code
+    - title
+    - workflow_code
+    - collection_experiment_code
+  layout: tile
+  card_min_width: 16rem
+  density: cozy
+  fact_labels: false
+
+# No array previews for these metadata-only crates.
+preview: {}
+
+# Per-crate detail column: sidecar plots + compact metrics (not gallery plots:).
+crate:
+  plots:
+    defaults:
+      width_fraction: 0.45
+      # width/height; height/width = 0.6 → aspect_ratio ≈ 1.667
+      aspect_ratio: 1.6667
+    panels:
+      - type: vega
+        title: CC(1/2) vs 1/resolution²
+        data:
+          from: sidecar
+          path: shell_tables
+          match:
+            field: stage
+            contains: "Final processing"
+          rows: rows
+          number_fields:
+            - resolution_limit
+            - cc_half_pct
+        spec:
+          transform:
+            - calculate: "1 / pow(datum.resolution_limit, 2)"
+              as: inv_d_sq
+          mark: { type: line, point: true, color: "#38bdf8" }
+          encoding:
+            x:
+              field: inv_d_sq
+              type: quantitative
+              scale: { zero: false }
+              title: "1/resolution² (Å⁻²)"
+            y:
+              field: cc_half_pct
+              type: quantitative
+              scale: { zero: false }
+              title: CC(1/2) (%)
+            tooltip:
+              - { field: resolution_limit, type: quantitative, title: "resolution (Å)" }
+              - { field: inv_d_sq, type: quantitative, title: "1/resolution²" }
+              - { field: cc_half_pct, type: quantitative }
+  metrics:
+    title: Quality metrics
+    items:
+      - resolution
+      - completeness
+      - cc_half
+      - mean_i_over_sigma
+      - rmerge
+      - multiplicity
+      - space_group
+      - unit_cell_a
+      - unit_cell_b
+      - unit_cell_c
+      - unit_cell_alpha
+      - unit_cell_beta
+      - unit_cell_gamma
+      - wavelength_angstrom
+
+  # Crate detail tab: agent jobs for this crate + result payloads from agent_server.
+  actions:
+    enabled: true
+    title: Actions
+    # Global fallback when an agent has no entry under `agents`.
+    result_files:
+      - data/pdb_matches.json
+      - data/pdb_matches.csv
+      - data/mr_summary.json
+      - data/symmetry_report.json
+    # Display modules — see schemas/lambda_mx_display_modules.yaml
+    agents:
+      "035c162b-c868-4fd7-bd7d-f9404dfb250c":
+        display:
+          primary_file: data/pdb_matches.json
+          modules:
+            - kind: summary
+              title: PDB lattice matches
+              items:
+                - label: Matches
+                  from: count
+                  emphasis: true
+                - label: Resolved SG
+                  from: query.sg_hm
+                - label: Input SG
+                  from: query.sg
+                - label: Cutoff
+                  from: query.cutoff
+                  suffix: " Å"
+                - label: Same HM
+                  from: query.same_hm
+            - kind: table
+              rows: table
+              limit: 15
+              columns:
+                - field: pdb_id
+                  label: PDB
+                  link: pdb_entry_url
+                - field: distance
+                  label: Delta
+                  type: number
+                  decimals: 3
+                - field: space_group
+                  label: Space group
+                - field: sg_number
+                  label: SG no.
+                - field: protein_name
+                  label: Protein
+                  wrap: true
+                - field: deposition_authors
+                  label: Authors
+                  type: array
+                  join: "; "
+                  wrap: true
+                - field: unit_cell
+                  label: Unit cell
+                  type: array
+                  join: " "
+                  decimals: 2
+
+      "fe8df266-cb9a-4f32-84d1-43427645c60c":
+        display:
+          primary_file: data/symmetry_report.json
+          modules:
+            - kind: summary
+              title: Metric holohedry
+              items:
+                - label: Holohedry
+                  from: metric_symmetry.crystal_system
+                  emphasis: true
+                - label: Order
+                  from: metric_symmetry.order
+                - label: Space group
+                  from: query.sg_hm
+                - label: Max Δ (Le Page)
+                  from: query.max_delta_deg
+                  suffix: "°"
+            - kind: row
+              title: ITA plate & general positions
+              modules:
+                - kind: image
+                  title: ITA symmetry plate
+                  from: files.ita_plate
+                  alt: International Tables symmetry diagram
+                - kind: table
+                  title: General positions
+                  rows: metric_symmetry.operations
+                  primitive: string
+                  value_label: xyz
+            - kind: summary
+              title: Space-group subgroups
+              items:
+                - label: Subgroups
+                  from: space_group_graph.n_subgroups
+                  emphasis: true
+                - label: Assigned
+                  from: space_group_graph.assigned
+                - label: Space group
+                  from: query.sg_hm
+            - kind: graph
+              title: Space-group subgroup graph
+              from: space_group_graph
+              node_label: label
+              highlight_field: assigned
+            - kind: table
+              title: Subgroups in reference setting
+              rows: space_group_graph.nodes
+              limit: 20
+              columns:
+                - field: sg_hm
+                  label: Reference HM
+                - field: sg_number
+                  label: IT #
+                  type: number
+                  decimals: 0
+                - field: order
+                  label: Order
+                  type: number
+                  decimals: 0
+                - field: extended_hm
+                  label: Extended HM
+                  wrap: true
+                - field: cob_to_reference
+                  label: CoB → ref
+                - field: reference_cell
+                  label: Reference cell (a b c α β γ)
+                  type: array
+                  join: " "
+                  decimals: 2
+                - field: assigned
+                  label: Assigned
+            - kind: summary
+              title: Kurlin roots
+              items:
+                - label: Invariant
+                  from: kurlin_roots.invariant
+            - kind: row
+              modules:
+                - kind: kv
+                  title: Root products
+                  from: kurlin_roots.root_products
+                  value_decimals: 3
+                - kind: kv
+                  title: Conorms
+                  from: kurlin_roots.conorms
+                  value_decimals: 2
+            - kind: graph
+              title: Holohedry descent graph
+              from: holohedry_graph
+              highlight_field: assigned
+            - kind: table
+              title: Kurlin deficiency spectrum
+              rows: holohedry_graph.spectrum_sorted
+              limit: 10
+              columns:
+                - field: system
+                  label: System
+                - field: kurlin_deficiency_A
+                  label: Delta
+                  type: number
+                  decimals: 4
+
+      "9b37b68b-fcb9-4291-9a57-5d1de2cbaac5":
+        display:
+          primary_file: data/mr_summary.json
+          modules:
+            - kind: summary
+              title: Phaser MR
+              items:
+                - label: Status
+                  from: status
+                  emphasis: true
+                - label: Search model
+                  from: search_model_pdb_id
+                - label: Copies
+                  from: parameters.copies
+                - label: High res
+                  from: parameters.high_res
+                  suffix: " Å"
+                - label: Identity
+                  from: parameters.identity_percent
+                  suffix: "%"
+                - label: TNCS
+                  from: parameters.tncs_keyword
+            - kind: summary
+              title: Matthews analysis (authoritative)
+              items:
+                - label: Solvent
+                  from: matthews_analysis.solvent_pct
+                  suffix: "%"
+                  emphasis: true
+                - label: Solvent fraction
+                  from: matthews_analysis.solvent_fraction
+                - label: Most probable Z
+                  from: matthews_analysis.most_probable.z
+                - label: VM
+                  from: matthews_analysis.most_probable.vm
+                - label: Composition MW
+                  from: matthews_analysis.composition_mw
+                - label: Matthews resolution
+                  from: matthews_analysis.resolution
+                  suffix: " Å"
+                - label: Space group
+                  from: matthews_analysis.space_group
+            - kind: table
+              title: Matthews Z table
+              rows: matthews_analysis.rows
+              limit: 12
+              columns:
+                - field: z
+                  label: Z
+                - field: mw
+                  label: MW
+                  type: number
+                  decimals: 0
+                - field: vm
+                  label: VM
+                  type: number
+                  decimals: 2
+                - field: solvent_pct
+                  label: "% solvent"
+                  type: number
+                  decimals: 2
+                - field: rel_freq
+                  label: Rel freq
+                  type: number
+                  decimals: 3
+                - field: most_probable
+                  label: Best
+            - kind: density_popup
+              title: Molecular density
+              label: Open density viewer
+              pdb_from: view_pdb
+              map_from: density_map
+            - kind: summary
+              title: Density / packing
+              items:
+                - label: Density map
+                  from: density_map
+                - label: Packing relaxed
+                  from: packing_relaxed
+                - label: Density note
+                  from: density_note
+            - kind: table
+              title: Score lines
+              rows: score_lines
+              primitive: string
+              value_label: log
+              limit: 25
+            - kind: json
+              title: Full MR summary
+
+sections:
+  - id: sample
+    title: Sample
+    slots:
+      - sample_code
+      - sample_id
+      - title
+      - description
+  - id: acquisition
+    title: Acquisition
+    slots:
+      - facility
+      - beamline
+      - instrument_code
+      - modality
+      - technique
+      - experiment_count
+      - total_images
+      - collection_experiment_code
+  - id: indexing
+    title: Indexing (sidecar)
+    slots:
+      - indexing_confidence
+      - indexed_spots_pct
+  - id: workflow
+    title: Workflow
+    slots:
+      - workflow_code
+      - workflow_type
+      - software_name
+      - software_version
+      - workflow_started_at
+      - sidecar_file
+  - id: identifiers
+    title: Identifiers
+    slots:
+      - dataset_uuid
+      - crate_id
+      - crate_path
+      - ro_crate_metadata
+      - schema_uri
+
+plots:
+  defaults:
+    width_fraction: 1
+    aspect_ratio: 1.4
+  # Always-visible band: table + VL scatters (a/b, a/c, b/c).
+  rows:
+    - id: unit_cells
+      title: Unit cells
+      panels:
+        - type: table
+          title: Unit cell parameters
+          width_fraction: 0.34
+          columns:
+            - sample_code
+            - space_group
+            - unit_cell_a
+            - unit_cell_b
+            - unit_cell_c
+        - type: vega
+          title: a vs b
+          width_fraction: 0.22
+          aspect_ratio: 1
+          selection:
+            mode: lasso
+            id_field: id
+          spec:
+            mark:
+              type: point
+              filled: true
+              size: 70
+            encoding:
+              x:
+                field: unit_cell_a
+                type: quantitative
+                scale: { zero: false }
+                title: a (Å)
+              y:
+                field: unit_cell_b
+                type: quantitative
+                scale: { zero: false }
+                title: b (Å)
+              color:
+                field: space_group
+                type: nominal
+              tooltip:
+                - { field: sample_code, type: nominal }
+                - { field: unit_cell_a, type: quantitative }
+                - { field: unit_cell_b, type: quantitative }
+            params: []
+        - type: vega
+          title: a vs c
+          width_fraction: 0.22
+          aspect_ratio: 1
+          selection:
+            mode: lasso
+            id_field: id
+          spec:
+            mark:
+              type: point
+              filled: true
+              size: 70
+            encoding:
+              x:
+                field: unit_cell_a
+                type: quantitative
+                scale: { zero: false }
+                title: a (Å)
+              y:
+                field: unit_cell_c
+                type: quantitative
+                scale: { zero: false }
+                title: c (Å)
+              color:
+                field: space_group
+                type: nominal
+              tooltip:
+                - { field: sample_code, type: nominal }
+                - { field: unit_cell_a, type: quantitative }
+                - { field: unit_cell_c, type: quantitative }
+            params: []
+        - type: vega
+          title: b vs c
+          width_fraction: 0.22
+          aspect_ratio: 1
+          selection:
+            mode: lasso
+            id_field: id
+          spec:
+            mark:
+              type: point
+              filled: true
+              size: 70
+            encoding:
+              x:
+                field: unit_cell_b
+                type: quantitative
+                scale: { zero: false }
+                title: b (Å)
+              y:
+                field: unit_cell_c
+                type: quantitative
+                scale: { zero: false }
+                title: c (Å)
+              color:
+                field: space_group
+                type: nominal
+              tooltip:
+                - { field: sample_code, type: nominal }
+                - { field: unit_cell_b, type: quantitative }
+                - { field: unit_cell_c, type: quantitative }
+            params: []
+  histograms:
+    - slot: resolution
+      aspect_ratio: 1.6
+    - slot: completeness
+      aspect_ratio: 1.6
+    - slot: cc_half
+      aspect_ratio: 1.6
+  categorical:
+    - slot: space_group
+      width_fraction: 0.6
+    - slot: instrument_code
+      width_fraction: 0.6
+    - slot: software_name
+      width_fraction: 0.6
+
+# Metadata-only export: JSON manifest of cart crates (no array assets).
+export:
+  profiles:
+    - id: metadata_json
+      title: Metadata map (JSON)
+      description: >-
+        JSON manifest mapping cart crate IDs to searchable MX metadata.
+      assets: []
+      naming:
+        pattern: "{sample_code}"
+      manifest:
+        filename: manifest.json
+        slots:
+          - dataset_uuid
+          - sample_code
+          - space_group
+          - resolution
+          - completeness
+          - instrument_code
+          - software_name
+          - collection_experiment_code

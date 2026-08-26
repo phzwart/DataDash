@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rocrate-tiled"
+version = "0.1.0"
+description = "Index Lambda MX RO-Crate JSON into a Tiled catalog (metadata-only)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "tiled[all]",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+rocrate-tiled-index = "rocrate_tiled.index_cli:main"
+rocrate-tiled-prepare = "rocrate_tiled.prepare_data:main"
+rocrate-tiled-ingest = "rocrate_tiled.ingest:main"
+rocrate-tiled-smoke = "rocrate_tiled.smoke:main"
+rocrate-tiled-facility-smoke = "rocrate_tiled.facility_smoke:main"
+rocrate-tiled-rewrite-schema-uri = "rocrate_tiled.rewrite_schema_uri:main"
+rocrate-tiled-serve = "rocrate_tiled.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rocrate_tiled*"]

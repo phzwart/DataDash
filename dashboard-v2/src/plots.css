@@ -1,0 +1,41 @@
+/* Tight Plotly panel — avoid extra blank area below charts */
+.plot-panel {
+  display: block;
+  overflow: hidden;
+  line-height: 0;
+  flex: 0 0 auto;
+  max-width: 100%;
+  position: relative;
+}
+
+.plot-panel .js-plotly-plot {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  line-height: normal;
+}
+
+.plot-panel .plot-container.plotly {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.plot-panel .svg-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Keep drag/select layers interactive (do not blanket-disable SVG events) */
+.plot-panel .draglayer {
+  pointer-events: all !important;
+}
+
+.plot-panel .nsewdrag,
+.plot-panel .nwsecursor,
+.plot-panel .neswcursor {
+  pointer-events: all !important;
+}
+
+.plot-panel--selectable {
+  overflow: visible;
+}

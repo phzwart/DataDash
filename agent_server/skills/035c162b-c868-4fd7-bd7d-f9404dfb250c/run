@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+# PDB lattice-search agent — AGENT_BUILD_SPEC.md conformant.
+# Reads $INPUT_DIR/parameters.json (client-assembled via request: bindings),
+# calls PDB_SEARCH_URL, writes product files then ro-crate-metadata.json.
+set -euo pipefail
+
+: "${INPUT_DIR:?INPUT_DIR is required}"
+: "${OUTPUT_DIR:?OUTPUT_DIR is required}"
+: "${JOB_UUID:?JOB_UUID is required}"
+: "${AGENT_UUID:?AGENT_UUID is required}"
+: "${WORKSPACE:?WORKSPACE is required}"
+
+PDB_SEARCH_URL="${PDB_SEARCH_URL:-http://127.0.0.1:8877}"
+export PDB_SEARCH_URL
+
+INPUT_CRATE=""
+shopt -s nullglob
+for d in "$INPUT_DIR/crates"/*; do
+  if [[ -d "$d" && -f "$d/ro-crate-metadata.json" ]]; then
+    INPUT_CRATE="$d"
+    break
+  fi
+done
+shopt -u nullglob
+
+if [[ -z "$INPUT_CRATE" ]]; then
+  echo "No input crate found under $INPUT_DIR/crates" >&2
+  exit 1
+fi
+
+if [[ ! -f "$INPUT_DIR/parameters.json" ]]; then
+  echo "Missing required $INPUT_DIR/parameters.json (assemble via agent request: bindings)" >&2
+  exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR/data" "$WORKSPACE/work"
+
+if ! curl -fsS --max-time 5 "$PDB_SEARCH_URL/health" >/dev/null; then
+  echo "PDB search server not reachable at $PDB_SEARCH_URL/health" >&2
+  echo "Start it with: python -m agentsg.cell.pdb_server --db <pdb_cells.duckdb> --port 8877" >&2
+  exit 1
+fi
+
+python3 - <<'PY'
+import csv
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+RCSB_GRAPHQL = "https://data.rcsb.org/graphql"
+BATCH = 50
+
+
+def progress(message: str, percent: int) -> None:
+    path = Path(os.environ["WORKSPACE"]) / "work" / ".progress.json"
+    payload = {
+        "message": message,
+        "percent": percent,
+        "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    }
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(path)
+
+
+def http_json(method: str, url: str, body=None, timeout: int = 120):
+    data = None if body is None else json.dumps(body).encode()
+    headers = {"Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as fh:
+            return json.loads(fh.read().decode())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")
+        raise RuntimeError(f"{method} {url} -> HTTP {exc.code}: {detail}") from exc
+
+
+def enrich_ids(ids: list[str]) -> dict:
+    """Return {pdb_id: {protein_name, deposition_authors, enrichment_error?}}."""
+    out: dict = {}
+    for start in range(0, len(ids), BATCH):
+        chunk = ids[start : start + BATCH]
+        q = (
+            "{entries(entry_ids:%s){rcsb_id struct{title} "
+            "audit_author{name}}}" % json.dumps(chunk)
+        )
+        data = json.dumps({"query": q}).encode()
+        req = urllib.request.Request(
+            RCSB_GRAPHQL,
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as fh:
+                payload = json.load(fh)
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+            for pid in chunk:
+                out[pid] = {
+                    "protein_name": "",
+                    "deposition_authors": [],
+                    "enrichment_error": str(exc),
+                }
+            continue
+        if payload.get("errors"):
+            err = "; ".join(e.get("message", str(e)) for e in payload["errors"])
+            for pid in chunk:
+                out.setdefault(
+                    pid,
+                    {
+                        "protein_name": "",
+                        "deposition_authors": [],
+                        "enrichment_error": err,
+                    },
+                )
+        for entry in (payload.get("data") or {}).get("entries") or []:
+            if not entry:
+                continue
+            pid = entry["rcsb_id"]
+            title = (entry.get("struct") or {}).get("title") or ""
+            authors = [
+                a["name"]
+                for a in (entry.get("audit_author") or [])
+                if a and a.get("name")
+            ]
+            out[pid] = {
+                "protein_name": title,
+                "deposition_authors": authors,
+            }
+        for pid in chunk:
+            out.setdefault(
+                pid,
+                {
+                    "protein_name": "",
+                    "deposition_authors": [],
+                    "enrichment_error": "not returned by RCSB",
+                },
+            )
+    return out
+
+
+output_dir = Path(os.environ["OUTPUT_DIR"]).resolve()
+input_dir = Path(os.environ["INPUT_DIR"]).resolve()
+workspace = Path(os.environ["WORKSPACE"]).resolve()
+job_uuid = os.environ["JOB_UUID"]
+agent_uuid = os.environ["AGENT_UUID"]
+base_url = os.environ["PDB_SEARCH_URL"].rstrip("/")
+
+if workspace not in output_dir.parents and output_dir != workspace:
+    print(f"Refusing to write outside WORKSPACE: {output_dir}", file=sys.stderr)
+    sys.exit(1)
+
+input_crate_dir = next(
+    d
+    for d in (input_dir / "crates").iterdir()
+    if d.is_dir() and (d / "ro-crate-metadata.json").is_file()
+)
+source_crate_uuid = input_crate_dir.name
+
+params = json.loads((input_dir / "parameters.json").read_text(encoding="utf-8"))
+try:
+    cell = [float(x) for x in params["cell"]]
+    if len(cell) != 6:
+        raise ValueError("cell must have six numbers (a b c alpha beta gamma)")
+    sg = params["sg"]
+    if sg is None or str(sg).strip() == "":
+        raise ValueError("sg is required")
+    cutoff = float(params["cutoff"])
+    same_hm = bool(params.get("same_hm", True))
+except (KeyError, TypeError, ValueError) as exc:
+    print(f"Invalid parameters.json: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+progress("calling PDB lattice search HTTP API", 20)
+body = {"cell": cell, "sg": sg, "cutoff": cutoff, "same_hm": same_hm}
+result = http_json("POST", f"{base_url}/search", body)
+hits = result.get("hits") or []
+ids = [h["pdb_id"] for h in hits]
+
+progress(f"enriching {len(ids)} hits from RCSB", 60)
+meta = enrich_ids(ids) if ids else {}
+
+table = []
+for h in hits:
+    pid = h["pdb_id"]
+    info = meta.get(pid, {})
+    row = {
+        "pdb_id": pid,
+        "distance": h.get("distance"),
+        "protein_name": info.get("protein_name", ""),
+        "deposition_authors": info.get("deposition_authors", []),
+        "space_group": h.get("sg_hm") or result.get("sg_hm"),
+        "sg_number": (
+            h.get("sg_number")
+            if h.get("sg_number") is not None
+            else result.get("sg_number")
+        ),
+        "unit_cell": h.get("cell"),
+        "pdb_entry_url": f"https://www.rcsb.org/structure/{pid}",
+        "mmcif_url": f"https://files.rcsb.org/download/{pid}.cif",
+        "pdb_url": f"https://files.rcsb.org/download/{pid}.pdb",
+    }
+    if info.get("enrichment_error"):
+        row["enrichment_error"] = info["enrichment_error"]
+    table.append(row)
+
+product = {
+    "job_uuid": job_uuid,
+    "agent_uuid": agent_uuid,
+    "source_crate_uuid": source_crate_uuid,
+    "pdb_search_url": base_url,
+    "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    "query": {
+        "cell": cell,
+        "sg": sg,
+        "sg_number": result.get("sg_number"),
+        "sg_hm": result.get("sg_hm"),
+        "cutoff": cutoff,
+        "same_hm": same_hm,
+    },
+    "pipeline": result.get("pipeline"),
+    "centering": result.get("centering"),
+    "primitive_cell": result.get("primitive_cell"),
+    "count": len(table),
+    "table": table,
+}
+
+# Product files FIRST, then RO-Crate (spec: write metadata last).
+json_path = output_dir / "data" / "pdb_matches.json"
+csv_path = output_dir / "data" / "pdb_matches.csv"
+json_path.parent.mkdir(parents=True, exist_ok=True)
+json_path.write_text(json.dumps(product, indent=2), encoding="utf-8")
+
+fieldnames = [
+    "pdb_id",
+    "distance",
+    "protein_name",
+    "deposition_authors",
+    "space_group",
+    "sg_number",
+    "unit_cell",
+    "pdb_entry_url",
+    "mmcif_url",
+    "pdb_url",
+]
+with csv_path.open("w", encoding="utf-8", newline="") as fh:
+    writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for row in table:
+        writer.writerow(
+            {
+                **row,
+                "deposition_authors": "; ".join(row.get("deposition_authors") or []),
+                "unit_cell": " ".join(str(x) for x in (row.get("unit_cell") or [])),
+            }
+        )
+
+progress("writing RO-Crate", 90)
+crate = {
+    "@context": [
+        "https://w3id.org/ro/crate/1.2/context",
+        {
+            "lambda": "http://w3id.org/lambda/",
+            "lambdax": "https://lambda-ber.github.io/profile/mx/0.2.0/terms/",
+        },
+    ],
+    "@graph": [
+        {
+            "@id": "ro-crate-metadata.json",
+            "@type": "CreativeWork",
+            "conformsTo": {"@id": "https://w3id.org/ro/crate/1.2"},
+            "about": {"@id": "./"},
+        },
+        {
+            "@id": "./",
+            "@type": ["Dataset", "lambda:Dataset"],
+            "identifier": {
+                "@type": "PropertyValue",
+                "propertyID": "UUID",
+                "value": job_uuid,
+            },
+            "name": "PDB lattice search matches",
+            "description": (
+                f"Root-form PDB lattice matches for job {job_uuid} "
+                f"(source crate {source_crate_uuid}; via {base_url})"
+            ),
+        },
+        {
+            "@id": "data/pdb_matches.json",
+            "@type": "File",
+            "name": "pdb_matches.json",
+            "encodingFormat": "application/json",
+            "contentSize": json_path.stat().st_size,
+        },
+        {
+            "@id": "data/pdb_matches.csv",
+            "@type": "File",
+            "name": "pdb_matches.csv",
+            "encodingFormat": "text/csv",
+            "contentSize": csv_path.stat().st_size,
+        },
+    ],
+}
+(output_dir / "ro-crate-metadata.json").write_text(
+    json.dumps(crate, indent=2), encoding="utf-8"
+)
+progress("done", 100)
+print(f"Wrote {json_path} ({len(table)} rows) and RO-Crate", file=sys.stderr)
+PY
+
+echo "Wrote $OUTPUT_DIR/ro-crate-metadata.json"

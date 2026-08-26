@@ -1,0 +1,64 @@
+agent_uuid: "035c162b-c868-4fd7-bd7d-f9404dfb250c"
+name: pdb-lattice-search-agent
+version: "0.1.1"
+description: "Search the PDB for lattices matching a unit cell via Kurlin root form; return an enriched table."
+
+runner:
+  type: shell
+  entrypoint: "./run"
+  cwd: work
+  timeout_seconds: 3600
+  env:
+    PDB_SEARCH_URL: "http://127.0.0.1:8877"
+
+input:
+  items:
+    - name: source_crate
+      type: rocrate_ref
+      required: true
+      cardinality: "1..1"
+    - name: parameters
+      type: json
+      required: true
+      cardinality: "1..1"
+
+# Autofill recipe — dashboard/CLI assemble POST /jobs JSON from crate + user knobs.
+# FLAG: lives in agent.yaml for now; may move to facility dashboard YAML later.
+# See agent_server/skills/AGENT_BUILD_SPEC.md §3 (flagged coupling).
+request:
+  crate_input: source_crate
+  parameters_input: parameters
+  parameters:
+    cell:
+      from: crate.summary.unit_cell
+      required: true
+      user: true
+      type: array
+      description: "Unit cell a b c α β γ (Å, °) — autofilled from crate summary"
+    sg:
+      from: crate.summary.space_group
+      required: true
+      user: true
+      type: string
+      description: "Space group (Hermann–Mauguin or IT number) — autofilled from crate"
+    cutoff:
+      default: 5.0
+      required: true
+      user: true
+      type: number
+      description: "Root-distance cutoff (Å)"
+    same_hm:
+      default: true
+      user: true
+      type: boolean
+      description: "Restrict hits to the same HM setting"
+
+output:
+  required_files:
+    - ro-crate-metadata.json
+    - data/pdb_matches.json
+    - data/pdb_matches.csv
+  root_dir: output
+  profile:
+    rocrate: "1.2"
+    extension: "lambda_agent_product/0.1.0"

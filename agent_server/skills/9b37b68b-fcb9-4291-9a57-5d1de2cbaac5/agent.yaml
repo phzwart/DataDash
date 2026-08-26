@@ -1,0 +1,78 @@
+agent_uuid: "9b37b68b-fcb9-4291-9a57-5d1de2cbaac5"
+name: phaser-mr-agent
+version: "0.1.0"
+description: "Minimal Phaser MR: RCSB sequence hit → stripped model → MR_AUTO against crate MTZ."
+
+runner:
+  type: shell
+  entrypoint: "./run"
+  cwd: work
+  timeout_seconds: 21600
+  env:
+    PHENIX: "/Users/phzwart/Applications/phenix-2.0-5936"
+    PHENIX_PREFIX: "/Users/phzwart/Applications/phenix-2.0-5936"
+    PHENIX_VERSION: "2.0-5936"
+
+input:
+  items:
+    - name: source_crate
+      type: rocrate_ref
+      required: true
+      cardinality: "1..1"
+    - name: parameters
+      type: json
+      required: true
+      cardinality: "1..1"
+
+request:
+  crate_input: source_crate
+  parameters_input: parameters
+  parameters:
+    sequence:
+      required: true
+      user: true
+      type: string
+      description: "Protein sequence (one-letter codes; FASTA header optional)"
+    copies:
+      default: 1
+      required: true
+      user: true
+      type: number
+      description: "Number of copies of this component to place in the ASU"
+    high_res:
+      default: 4.0
+      required: true
+      user: true
+      type: number
+      description: "High-resolution limit for Phaser MR (Å)"
+    identity:
+      default: 0.5
+      required: true
+      user: true
+      type: number
+      description: "Sequence identity of search model (0–1 fraction; passed to Phaser as %)"
+    mtz_name:
+      default: "staraniso_alldata-unique.mtz"
+      required: true
+      user: true
+      type: string
+      description: "MTZ basename; resolved from crate lambdax:referencesArtefacts absolute @id"
+    tncs:
+      default: false
+      required: true
+      user: true
+      type: boolean
+      description: "Use translational NCS corrections (Phaser TNCS USE ON/OFF). Default off."
+
+output:
+  required_files:
+    - ro-crate-metadata.json
+    - data/mr_summary.json
+    - data/search_hit.json
+    - data/bare_model.pdb
+    - data/phaser.log
+    - data/matthews_analysis.txt
+  root_dir: output
+  profile:
+    rocrate: "1.2"
+    extension: "lambda_agent_product/0.1.0"

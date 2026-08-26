@@ -1,0 +1,29 @@
+server:
+  host: "127.0.0.1"
+  port: 8780
+
+paths:
+  skills_dir: "./skills"
+  jobs_root: "./jobs_root"
+  agent_data_root: "./agent_data_root"
+  jobs_db: "./var/jobs.db"
+  schemas_dir: "./schemas"
+
+ingest:
+  adapter: noop
+  facility_url: "http://127.0.0.1:8767"
+  data_root: "./agent_data_root"
+  # Fallbacks after facility_url / options.crate_source_url (client_store hydrate API).
+  crate_source_urls:
+    - "http://127.0.0.1:8770"
+  # Prefer the canonical TMP_LAMBDA store (absolute File @ids + MTZ bytes).
+  local_crate_roots:
+    - "/Users/phzwart/Projects/TMP_LAMBDA/data_root"
+    - "../client_store/data_root"
+
+jobs:
+  cancel_grace_seconds: 30
+  heartbeat_stale_seconds: 120
+  auto_kill_stale_jobs: false
+  default_timeout_seconds: 3600
+  progress_poll_seconds: 5

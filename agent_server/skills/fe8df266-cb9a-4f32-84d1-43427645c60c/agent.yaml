@@ -1,0 +1,51 @@
+agent_uuid: "fe8df266-cb9a-4f32-84d1-43427645c60c"
+name: symmetry-explore-agent
+version: "0.1.0"
+description: "Explore metric symmetry, Selling/Niggli cells, Kurlin roots, holohedry graph, and ITA plate."
+
+runner:
+  type: shell
+  entrypoint: "./run"
+  cwd: work
+  timeout_seconds: 3600
+  env:
+    PYTHONPATH: "/Users/phzwart/Projects/agentsg/agentsg/src"
+
+input:
+  items:
+    - name: source_crate
+      type: rocrate_ref
+      required: true
+      cardinality: "1..1"
+    - name: parameters
+      type: json
+      required: true
+      cardinality: "1..1"
+
+request:
+  crate_input: source_crate
+  parameters_input: parameters
+  parameters:
+    cell:
+      from: crate.summary.unit_cell
+      required: true
+      type: array
+      description: "Unit cell a b c α β γ"
+    sg:
+      from: crate.summary.space_group
+      required: true
+      type: string
+      description: "Space group (HM or IT number)"
+    max_delta:
+      default: 3.0
+      user: true
+      type: number
+      description: "Le Page angular tolerance (degrees) for metric symmetry"
+
+output:
+  required_files:
+    - ro-crate-metadata.json
+  root_dir: output
+  profile:
+    rocrate: "1.2"
+    extension: "lambda_agent_product/0.1.0"

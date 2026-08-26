@@ -1,0 +1,26 @@
+agent_uuid: "00000000-0000-4000-8000-000000000000"
+name: template-agent
+version: "0.0.0"
+description: "Copy this directory and replace agent_uuid with your own."
+
+runner:
+  type: shell
+  entrypoint: "./run"
+  cwd: work
+  timeout_seconds: 3600
+  env: {}
+
+input:
+  items:
+    - name: source_crate
+      type: rocrate_ref
+      required: true
+      cardinality: "1..1"
+
+output:
+  required_files:
+    - ro-crate-metadata.json
+  root_dir: output
+  profile:
+    rocrate: "1.2"
+    extension: "lambda_agent_product/0.1.0"

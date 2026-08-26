@@ -1,0 +1,9 @@
+.venv/
+skills/**/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+var/jobs.db
+jobs_root/
+agent_data_root/
+*.egg-info/

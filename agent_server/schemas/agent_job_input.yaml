@@ -1,0 +1,61 @@
+id: https://example.org/schemas/agent_job_input.yaml
+name: agent_job_input
+title: Agent Job Submission Contract
+description: LinkML schema for POST /api/v1/jobs request bodies.
+license: CC-BY-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+  agent: https://example.org/agent/
+default_prefix: agent
+default_range: string
+imports:
+  - linkml:types
+
+classes:
+  AgentJobSubmit:
+    description: Request body for submitting an agent job.
+    slots:
+      - job_uuid
+      - agent_uuid
+      - inputs
+      - options
+  AgentJobInputItem:
+    description: One named input item in a job submission.
+    slots:
+      - name
+      - type
+      - uuid
+      - value
+      - path
+
+slots:
+  job_uuid:
+    description: Optional client-supplied job UUID.
+    range: string
+  agent_uuid:
+    description: Registered agent UUID.
+    range: string
+    required: true
+  inputs:
+    description: Map of input name to typed input descriptor.
+    range: AgentJobInputItem
+    multivalued: true
+  options:
+    description: Job options such as facility_url.
+    range: string
+  name:
+    identifier: true
+    range: string
+  type:
+    description: Input type (rocrate_ref, json, file).
+    range: string
+  uuid:
+    description: Crate UUID for rocrate_ref inputs.
+    range: string
+  value:
+    description: JSON value for json inputs.
+    range: string
+  path:
+    description: Filesystem path for file inputs.
+    range: string

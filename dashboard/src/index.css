@@ -1,0 +1,79 @@
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #e2e8f0;
+  background-color: #0f172a;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  height: 100%;
+}
+
+/* Notes popup: match Finch light content shell (not the dark :root). */
+html.notes-popup,
+html.notes-popup body,
+html.notes-popup #root {
+  background-color: #f0f9ff; /* sky-50 */
+  color: #1e293b; /* slate-800 */
+}
+
+a {
+  color: inherit;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+/*
+ * Finch HubAppLayout uses a light content shell; our Tailwind classes set
+ * text-slate-100. Force readable inputs (dark text on light field) so typing
+ * is always visible regardless of parent theme.
+ */
+input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  color: #0f172a !important;
+  background-color: #ffffff !important;
+  border-color: #94a3b8 !important;
+  caret-color: #0f172a;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #64748b !important;
+  opacity: 1;
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  color: #64748b !important;
+  background-color: #f1f5f9 !important;
+}
+
+/*
+ * Finch puts every RouteItem in the sidebar. Hide deep-link and legacy redirect routes.
+ */
+aside.bg-sky-950 > div:has(a[href*="/crates/"]),
+aside.bg-sky-950 > div:has(a[href="/notes"]),
+aside.bg-sky-950 > div:has(a[href="/schemas"]),
+aside.bg-sky-950 > div:has(a[href="/browse"]),
+aside.bg-sky-950 > div:has(a[href="/selection"]),
+aside.bg-sky-950 > div:has(a[href="/cart"]),
+aside.bg-sky-950 > div:has(a[href="/export"]) {
+  display: none;
+}

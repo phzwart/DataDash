@@ -1,0 +1,54 @@
+# Python
+**/__pycache__/
+*.pyc
+**/*.egg-info/
+**/.pytest_cache/
+
+# Virtualenvs
+server/.venv/
+client_store/.venv/
+agent_server/.venv/
+agent_server/skills/**/.venv/
+
+# Local databases / job state
+server/var/*.db
+server/var/*.db-*
+client_store/var/*.db
+client_store/var/*.db-*
+agent_server/var/jobs.db
+agent_server/var/jobs.db-*
+agent_server/jobs_root/
+agent_server/agent_data_root/
+
+# Client store hydrated crates (keep schemas)
+client_store/data_root/*
+!client_store/data_root/schemas/
+!client_store/data_root/schemas/**
+
+# Dashboard clients
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.env
+dashboard-v2/node_modules/
+dashboard-v2/dist/
+dashboard-v2/.env
+
+# Secrets — never commit
+.env
+.env.local
+**/.env
+!**/.env.example
+!**/.env-example
+
+# Local runtime (start_all.sh logs, pids, one-off scripts)
+var/logs/
+var/run/
+var/*.log
+var/*.pid
+var/*.sh
+
+# OS
+.DS_Store
+
+# Vendored Finch (built from github.com/bluesky/finch#main)
+vendor/finch/node_modules/

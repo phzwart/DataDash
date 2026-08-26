@@ -1,0 +1,35 @@
+# LAMBDA facility server on Tiled.
+#
+#   export TILED_API_KEY=secret
+#   export DATA_ROOT=/absolute/path/to/data_root
+#   ./serve.sh
+#
+# On startup the server:
+#   1. Indexes DATA_ROOT/{uuid}/ into facility_index.db (LAMBDA /api/v1/search)
+#   2. Registers RO-Crate File nodes in Tiled at /crates/{uuid}/assets/
+#
+# Tiled tree:
+#   /crates/{uuid}                 metadata container
+#   /crates/{uuid}/assets/{key}    external bytes for each RO-Crate File node
+
+authentication:
+  single_user_api_key: ${TILED_API_KEY}
+
+allow_origins:
+  - http://127.0.0.1:5173
+  - http://localhost:5173
+  - http://127.0.0.1:5174
+  - http://localhost:5174
+  - http://127.0.0.1:5175
+  - http://localhost:5175
+
+expose_raw_assets: true
+
+trees:
+  - path: /
+    tree: catalog
+    args:
+      uri: "sqlite+aiosqlite:///./var/catalog.db"
+      readable_storage:
+        - ${DATA_ROOT}
+      init_if_not_exists: true

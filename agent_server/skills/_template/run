@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Template runner — copy and customize.
+set -euo pipefail
+echo "Replace agent_uuid in agent.yaml and implement this script." >&2
+exit 1

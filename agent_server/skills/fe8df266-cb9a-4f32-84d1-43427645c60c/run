@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Symmetry exploration agent: agentsg in-process + RO-Crate product.
+set -euo pipefail
+
+: "${INPUT_DIR:?INPUT_DIR is required}"
+: "${OUTPUT_DIR:?OUTPUT_DIR is required}"
+: "${JOB_UUID:?JOB_UUID is required}"
+: "${AGENT_UUID:?AGENT_UUID is required}"
+: "${WORKSPACE:?WORKSPACE is required}"
+
+INPUT_CRATE=""
+for d in "$INPUT_DIR/crates"/*; do
+  if [[ -f "$d/ro-crate-metadata.json" ]]; then
+    INPUT_CRATE="$d"
+    break
+  fi
+done
+
+if [[ -z "$INPUT_CRATE" ]]; then
+  echo "No input crate found under $INPUT_DIR/crates" >&2
+  exit 1
+fi
+
+if [[ ! -f "$INPUT_DIR/parameters.json" ]]; then
+  echo "Missing required $INPUT_DIR/parameters.json" >&2
+  exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR/data" "$WORKSPACE/work"
+
+AGENT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PYTHONPATH="${PYTHONPATH:-/Users/phzwart/Projects/agentsg/agentsg/src}"
+
+# shellcheck source=../_lib/resolve_python.sh
+source "$AGENT_DIR/../_lib/resolve_python.sh"
+require_agent_venv "$AGENT_DIR"
+PY="$(resolve_agent_python "$AGENT_DIR")"
+
+"$PY" - <<PY
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Agent helper lives next to this script.
+sys.path.insert(0, "${AGENT_DIR}")
+from symmetry_explore import explore
+
+output_dir = Path(os.environ["OUTPUT_DIR"])
+input_dir = Path(os.environ["INPUT_DIR"])
+job_uuid = os.environ["JOB_UUID"]
+agent_uuid = os.environ["AGENT_UUID"]
+
+input_crate_dir = next(
+    d for d in (input_dir / "crates").iterdir()
+    if d.is_dir() and (d / "ro-crate-metadata.json").is_file()
+)
+source_crate_uuid = input_crate_dir.name
+
+params = json.loads((input_dir / "parameters.json").read_text(encoding="utf-8"))
+try:
+    cell = params["cell"]
+    sg = params["sg"]
+    max_delta = float(params.get("max_delta", 3.0))
+except (KeyError, TypeError, ValueError) as exc:
+    print(f"Invalid parameters.json: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+report = explore(
+    cell, sg,
+    max_delta=max_delta,
+    output_dir=output_dir,
+    source_crate_uuid=source_crate_uuid,
+    job_uuid=job_uuid,
+)
+
+json_path = output_dir / "data" / "symmetry_report.json"
+csv_path = output_dir / "data" / "symmetry_table.csv"
+sg_csv_path = output_dir / "data" / "space_group_graph.csv"
+plate_path = output_dir / "data" / "ita_plate.png"
+
+crate = {
+    "@context": [
+        "https://w3id.org/ro/crate/1.2/context",
+        {
+            "lambda": "http://w3id.org/lambda/",
+            "lambdax": "https://lambda-ber.github.io/profile/mx/0.2.0/terms/",
+        },
+    ],
+    "@graph": [
+        {
+            "@id": "ro-crate-metadata.json",
+            "@type": "CreativeWork",
+            "conformsTo": {"@id": "https://w3id.org/ro/crate/1.2"},
+            "about": {"@id": "./"},
+        },
+        {
+            "@id": "./",
+            "@type": ["Dataset", "lambda:Dataset"],
+            "identifier": {
+                "@type": "PropertyValue",
+                "propertyID": "UUID",
+                "value": job_uuid,
+            },
+            "name": "Symmetry exploration report",
+            "description": (
+                f"Metric symmetry, Selling/Niggli cells, Kurlin roots, "
+                f"space-group subgroup graph, and ITA plate "
+                f"for job {job_uuid} (source crate {source_crate_uuid})"
+            ),
+        },
+        {
+            "@id": "data/symmetry_report.json",
+            "@type": "File",
+            "name": "symmetry_report.json",
+            "encodingFormat": "application/json",
+            "contentSize": json_path.stat().st_size,
+        },
+        {
+            "@id": "data/symmetry_table.csv",
+            "@type": "File",
+            "name": "symmetry_table.csv",
+            "encodingFormat": "text/csv",
+            "contentSize": csv_path.stat().st_size,
+        },
+        {
+            "@id": "data/space_group_graph.csv",
+            "@type": "File",
+            "name": "space_group_graph.csv",
+            "encodingFormat": "text/csv",
+            "contentSize": sg_csv_path.stat().st_size,
+        },
+        {
+            "@id": "data/ita_plate.png",
+            "@type": "File",
+            "name": "ita_plate.png",
+            "encodingFormat": "image/png",
+            "contentSize": plate_path.stat().st_size,
+        },
+    ],
+}
+(output_dir / "ro-crate-metadata.json").write_text(
+    json.dumps(crate, indent=2), encoding="utf-8"
+)
+sg = report["space_group_graph"]
+print(
+    f"Symmetry explore: holohedry={report['metric_symmetry']['crystal_system']} "
+    f"order={report['metric_symmetry']['order']} "
+    f"selling_distinct={report['selling_orbit']['n_distinct_settings']} "
+    f"sg_subgroups={sg['n_subgroups']} "
+    f"sg_chain={' → '.join(sg['primary_chain'])}",
+    file=sys.stderr,
+)
+PY
+
+echo "Wrote $OUTPUT_DIR/ro-crate-metadata.json"

@@ -1,0 +1,77 @@
+id: https://example.org/schemas/agent_product.yaml
+name: agent_product
+title: Agent Product RO-Crate Profile Extension
+description: >-
+  LinkML profile extension for agent-generated RO-Crate products. Server
+  merges lambda:AgentRun provenance after agent execution.
+license: CC-BY-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  schema: https://schema.org/
+  lambda: https://w3id.org/lambda/
+  lambdax: https://lambda-ber.github.io/profile/mx/0.2.0/terms/
+default_prefix: lambdax
+default_range: string
+imports:
+  - linkml:types
+
+classes:
+  AgentRun:
+    description: Provenance node for an agent job execution (CreateAction).
+    is_a: CreateAction
+    class_uri: schema:CreateAction
+    slots:
+      - id
+      - name
+      - instrument
+      - object
+      - result
+      - startTime
+      - endTime
+      - jobUuid
+      - inputCrates
+  AgentProductDataset:
+    description: Root dataset node for an agent product crate.
+    is_a: Dataset
+    class_uri: schema:Dataset
+    slots:
+      - id
+      - name
+      - description
+      - wasDerivedFrom
+      - workflow_runs
+
+slots:
+  id:
+    identifier: true
+    range: uriorcurie
+  name:
+    range: string
+  description:
+    range: string
+  instrument:
+    description: Reference to the agent SoftwareApplication node.
+    range: uriorcurie
+  object:
+    range: uriorcurie
+  result:
+    range: uriorcurie
+  startTime:
+    range: datetime
+  endTime:
+    range: datetime
+  jobUuid:
+    slot_uri: lambdax:jobUuid
+    range: string
+  inputCrates:
+    slot_uri: lambdax:inputCrates
+    range: uriorcurie
+    multivalued: true
+  wasDerivedFrom:
+    slot_uri: schema:wasDerivedFrom
+    range: uriorcurie
+    multivalued: true
+  workflow_runs:
+    slot_uri: lambda:workflow_runs
+    range: uriorcurie
+    multivalued: true

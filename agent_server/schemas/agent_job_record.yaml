@@ -1,0 +1,55 @@
+id: https://example.org/schemas/agent_job_record.yaml
+name: agent_job_record
+title: Agent Job Record (flattened metadata)
+description: >-
+  Flattened job metadata for future search indexing in the agent_server
+  job database (separate from facility_index.db).
+license: CC-BY-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  agent: https://example.org/agent/
+default_prefix: agent
+default_range: string
+imports:
+  - linkml:types
+
+classes:
+  AgentJobRecord:
+    description: Searchable snapshot of one agent job.
+    slots:
+      - id
+      - job_uuid
+      - agent_uuid
+      - status
+      - phase
+      - created_at
+      - started_at
+      - finished_at
+      - output_crate_uuid
+      - error_message
+      - facility_url
+
+slots:
+  id:
+    identifier: true
+    range: string
+  job_uuid:
+    range: string
+  agent_uuid:
+    range: string
+  status:
+    range: string
+  phase:
+    range: string
+  created_at:
+    range: string
+  started_at:
+    range: string
+  finished_at:
+    range: string
+  output_crate_uuid:
+    range: string
+  error_message:
+    range: string
+  facility_url:
+    range: string

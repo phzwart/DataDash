@@ -1,0 +1,15 @@
+# Collection / working-set config (NOT LinkML).
+id: http://127.0.0.1:8000/schemas/lambda_mx_collection.yaml
+title: Lambda MX EcCc*_MS collection
+description: >-
+  Working set for the EcCc*_MS pin crates discovered at AMX.
+  Clear the URI in Setup to use all of /crates.
+dashboard_uri: http://127.0.0.1:8000/schemas/lambda_mx_dashboard.yaml
+
+# Example: only AMX pins (all current crates match).
+filters:
+  instrument_code: AMX
+
+# Optional explicit UUID allow-list.
+# crate_ids:
+#   - f43e7c0a-bfe7-56e8-af31-6a91ce6cd02e

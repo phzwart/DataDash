@@ -1,0 +1,278 @@
+
+# finch
+
+  ![finch_icon](https://github.com/user-attachments/assets/bf17cfe1-5df5-4fcd-8c4d-3a99982ce2fe)  
+  
+A React component library for Bluesky beamlines. 
+
+To view components in your browser and see documentation check out our growing [interactive library.](https://blueskyproject.io/finch)
+
+
+#  Installation
+
+> **New project?** Scaffold a Vite + React 18 + TypeScript app first:
+> ```bash
+> npm create vite@5 my-app -- --template react-ts
+> cd my-app
+> npm install
+> ```
+> This creates a project pinned to React 18. Then follow the steps below.
+
+Once you have your own React app setup, install finch in the root project directory with:
+```
+npm install @blueskyproject/finch
+```
+
+You will also need the following peer dependencies if not already installed:
+```
+npm install react@^18 react-dom@^18 react-router^7 @tanstack/react-query
+```
+
+Note Finch only supports React V16-18.
+
+## App Setup
+
+Finch components rely on three providers that must wrap your app:
+
+1. **`QueryClientProvider`** — from `@tanstack/react-query`, required for data fetching hooks used by QServer and other components.
+2. **`BrowserRouter`** — from `react-router`, required for routing-based components like `HubAppLayout`.
+3. **`FinchConfigProvider`** — from `@blueskyproject/finch`, configures backend service URLs and API keys used throughout the library.
+
+```tsx
+// main.tsx
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { FinchConfigProvider } from '@blueskyproject/finch';
+import '@blueskyproject/finch/style.css'; //<--Import this file once at the top level
+import App from './App';
+
+const queryClient = new QueryClient();
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <BrowserRouter>
+      <QueryClientProvider client={queryClient}>
+        <FinchConfigProvider config={{
+          tiledApiUrl: 'http://localhost:8000/api/v1',
+          tiledApiKey: 'your-tiled-key',
+          ophydApiUrl: 'http://localhost:8001/api/v1',
+          qServerApiUrl: 'http://localhost:60610/api',
+          qServerApiKey: 'your-api-key',
+        }}>
+          <App />
+        </FinchConfigProvider>
+      </QueryClientProvider>
+    </BrowserRouter>
+  </StrictMode>
+);
+```
+You will only need to import `'@blueskyproject/finch/style.css'` once, in your entry point.
+
+All `FinchConfig` fields are optional — only provide the URLs for the services your app uses:
+
+| Field | Description | Default |
+|---|---| -- |
+| `qServerApiUrl` | URL of the Bluesky Queue Server HTTP API | http://localhost:60610/api |
+| `qServerApiKey` | API key for Queue Server authentication | test |
+| `tiledApiUrl` | URL of the Tiled data API | http://localhost:8000/api/v1 |
+| `tiledApiKey` | API key for Tiled authentication | `undefined` |
+| `ophydApiUrl` | URL of the Ophyd WebSocket server | http://localhost:8001/api/v1 |
+| `finchApiUrl` | URL of an optional Finch backend API | |
+
+Prefer to use env variables?
+
+```javascript
+        <FinchConfigProvider config={{
+          tiledApiUrl: import.meta.env.VITE_TILED_API_URL,
+          tiledApiKey: import.meta.env.VITE_TILED_API_KEY,
+          ophydApiUrl: import.meta.env.VITE_OPHYD_API_URL,
+          qServerApiUrl: import.meta.env.VITE_QSERVER_API_URL,
+          qServerApiKey: import.meta.env.VITE_QSERVER_API_KEY,
+        }}>
+```
+
+Put your env variables in a `.env` file in the project root, or set them in your terminal.
+```
+VITE_TILED_API_URL=http://localhost:8000/api/v1
+VITE_OPHYD_API_URL=http://localhost:8001/api/v1
+VITE_QSERVER_API_URL=http://localhost:60610/api
+
+VITE_QSERVER_API_KEY=test
+VITE_TILED_API_KEY=a-really-long-key
+```
+
+## App.tsx — Using HubAppLayout with Pages
+
+`HubAppLayout` provides a full app shell with a sidebar, header, and routed content area. Define your pages as components and pass them as a `routes` array.
+
+Icons are optional but recommended for the sidebar. [Phosphor Icons](https://phosphoricons.com/) are recommended for consistency with other Finch components.
+```
+npm install @phosphor-icons/react
+```
+
+```tsx
+// App.tsx
+import { HubAppLayout, RouteItem } from '@blueskyproject/finch';
+import { HouseIcon, GaugeIcon, ChartLineIcon } from '@phosphor-icons/react';
+import { TiledLookup } from '@blueskyproject/finch';
+import { BeamEnergyPV, Hexapod, Histogram, Bento } from '@blueskyproject/finch';
+
+// Example pages, typically imported from src/pages
+function HomePage() {
+  return <div>Welcome to my beamline app!</div>;
+}
+
+function ControlsPage() {
+  return (
+    <div>
+      <h2>Device Controls</h2>
+      <Bento>
+
+        <BeamEnergyPV pv="fake mirror" demo={true} />
+        <Hexapod prefix="fake hexapod" demo={true} />
+        <Histogram arrayPV="fake array" acquirePV="fake acquire" demo={true} />
+    </Bento>
+    </div>
+  );
+}
+
+function DataPage() {
+  return (
+    <div className="flex flex-col w-full h-full">
+      <p>Data visualization goes here.</p> 
+      <TiledLookup backgroundClassName='text-slate-700'/>
+    </div>
+  );
+}
+
+function App() {
+  const routes: RouteItem[] = [
+    {
+      path: '/',
+      label: 'Home',
+      element: <HomePage />,
+      icon: <HouseIcon size={32} />,
+      isBackgroundTransparent: true,
+    },
+    {
+      path: '/controls',
+      label: 'Controls',
+      element: <ControlsPage />,
+      icon: <GaugeIcon size={32} />,
+      isBackgroundTransparent: true,
+    },
+    {
+      path: '/data',
+      label: 'Data',
+      element: <DataPage />,
+      icon: <ChartLineIcon size={32} />,
+      isBackgroundTransparent: true,
+    },
+  ];
+
+  return (
+    <HubAppLayout
+      routes={routes}
+      headerTitle="My Beamline App"
+    />
+  );
+}
+
+export default App;
+```
+
+Each route entry supports:
+- `path` — the URL path, static only (e.g. `"/controls"`). The leading slash is optional
+- `label` — text shown in the sidebar navigation
+- `element` — the React component to render for that route (omit when `tabs` is set)
+- `tabs` — optional tabs shown in a strip above the page, each with its own URL (omit `element` when set)
+- `icon` — optional React element shown next to the label in the sidebar
+- `isBackgroundTransparent` — when `true`, renders the page with a transparent background and white text as a default (good for separate components on the same page)
+- `classNameContainer` — additional CSS classes for the page container
+- `showPageTitle` — whether this route's label appears in the header (defaults to `true`)
+
+Route paths must be static. The sidebar links to each `path` directly, so a dynamic segment such as `/runs/:uid` would render a link to that literal text.
+
+The header shows the active route's label after the app title, on every route. Pass `showPageTitle` to the layout to turn that off everywhere, and set `showPageTitle` on a route to override the layout either way. That is how you hide the label on a landing page whose app title already names it.
+
+### Page tabs
+
+A route can declare `tabs` instead of `element`. Finch draws a tab strip above the page and gives each tab its own URL beneath the route path, so tabs are deep-linkable and survive a refresh. Visiting the bare route path redirects to the first tab.
+
+```tsx
+const routes: RouteItem[] = [
+  {
+    path: '/explorer',
+    label: 'Explorer',
+    icon: <ChartLineIcon size={32} />,
+    tabs: [
+      { path: 'live', label: 'Live', element: <LiveTab /> },        // -> /explorer/live
+      { path: 'replay', label: 'Replay', element: <ReplayTab /> },  // -> /explorer/replay
+    ],
+  },
+];
+```
+
+Each tab takes `path`, `label`, and `element`, plus optional `isBackgroundTransparent` and `classNameContainer`. Both fall back to the parent route's values, and `classNameContainer` is merged on top of the route's rather than replacing it.
+
+A leading slash on a tab `path` is optional and ignored, so `'live'` and `'/live'` both land on `/explorer/live`. Trailing slashes are ignored too, repeated slashes collapse, and the route's own `path` works the same way. Case is ignored when matching, so someone who types `/Explorer/Live` lands on that same page.
+
+The root route can declare tabs, and they sit under a reserved `-` segment:
+
+```tsx
+const routes: RouteItem[] = [
+  {
+    path: '/',
+    label: 'Home',
+    tabs: [
+      { path: 'live', label: 'Live', element: <LiveTab /> },        // -> /-/live
+      { path: 'replay', label: 'Replay', element: <ReplayTab /> },  // -> /-/replay
+    ],
+  },
+];
+```
+
+Visiting `/` redirects to `/-/live`. The `-` keeps the root's tabs out of the top level, where `/live` would shadow a real `/live` route and leave the sidebar with no entry highlighted. It also keeps the tab catch-all scoped, so an unknown `/-/…` URL falls back to the first tab while the rest of your URLs are untouched. Leave `-` to the root's tabs.
+
+Finch rejects a couple of configurations with an error rather than failing quietly.
+
+A tab `path` cannot be empty or a bare `/`. Every tab needs its own segment beneath the route, so give it something like `path: 'overview'`.
+
+No two pages can land on the same URL. Routes and tabs share one URL space, so a route at `/explorer/live` collides with the Live tab of `/explorer` exactly as two `live` tabs collide with each other. Because slashes are trimmed and case is ignored, `'live'`, `'/live'` and `'Live'` all mean `/explorer/live`, so this is an error:
+
+```tsx
+tabs: [
+  { path: 'live', label: 'Live', element: <LiveTab /> },
+  { path: '/live', label: 'Replay', element: <ReplayTab /> },  // error: same URL as Live
+];
+```
+
+Without the check the Replay tab would be dead weight: both tabs would link to `/explorer/live`, both would draw as active, and only `<LiveTab />` would ever render.
+
+
+## Alternative Installation - Clone This Repo
+Instead of installing Finch into your existing React app, you can install this repository directly and get access to preconfigured layouts and pages.
+```bash
+git clone https://github.com/bluesky/finch.git
+cd finch
+npm install
+npm run dev
+```
+The app should be running at [http://localhost:5173/](http://localhost:5173/)
+
+# Requirements
+Some components in this library require network access to the Bluesky Queue Server, Tiled, and Ophyd-Websocket. The components are designed to work out of the box with the default ports for each service. 
+
+Specific paths/ports can be set at runtime with environment variables, or alternatively passed in as props to components that need them.
+
+For detailed backend setup instructions, see our [Backend Setup documentation](https://blueskyproject.io/finch/?path=/docs/documentation-backendsetup--docs).
+
+## Related Projects
+- [Queue Server](https://github.com/bluesky/bluesky-queueserver)
+- [Tiled](https://github.com/bluesky/tiled)
+- [Ophyd WebSocket](https://github.com/bluesky/ophyd-websocket)
+
+## Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and publishing guidelines.

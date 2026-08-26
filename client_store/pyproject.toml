@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lambda-client-store"
+version = "0.1.0"
+description = "Local Tiled client store + hydrate API for dashboard-v2."
+requires-python = ">=3.10"
+dependencies = [
+    "httpx",
+    "rocrate-tiled",
+]
+
+[project.scripts]
+lambda-client-store = "lambda_client_store.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lambda_client_store*"]

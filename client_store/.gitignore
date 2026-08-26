@@ -1,0 +1,10 @@
+# Hydrated crate trees — schemas are tracked separately
+data_root/*
+!data_root/schemas/
+!data_root/schemas/**
+
+var/*.db
+var/*.db-*
+**/__pycache__/
+*.egg-info/
+.venv/

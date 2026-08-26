@@ -1,0 +1,1298 @@
+#!/usr/bin/env bash
+# Minimal Phaser MR agent — AGENT_BUILD_SPEC.md conformant.
+# Sequence → RCSB hit → strip → phenix.phaser MR_AUTO against crate MTZ.
+set -euo pipefail
+
+: "${INPUT_DIR:?INPUT_DIR is required}"
+: "${OUTPUT_DIR:?OUTPUT_DIR is required}"
+: "${JOB_UUID:?JOB_UUID is required}"
+: "${AGENT_UUID:?AGENT_UUID is required}"
+: "${WORKSPACE:?WORKSPACE is required}"
+
+PHENIX="${PHENIX:-/Users/phzwart/Applications/phenix-2.0-5936}"
+export PHENIX
+export PHENIX_PREFIX="${PHENIX_PREFIX:-$PHENIX}"
+export PHENIX_VERSION="${PHENIX_VERSION:-2.0-5936}"
+export PATH="${PHENIX}/phenix_bin:${PATH}"
+
+if [[ ! -x "${PHENIX}/phenix_bin/phenix.phaser" ]]; then
+  echo "phenix.phaser not found under ${PHENIX}/phenix_bin (set PHENIX)" >&2
+  exit 1
+fi
+
+INPUT_CRATE=""
+shopt -s nullglob
+for d in "$INPUT_DIR/crates"/*; do
+  if [[ -d "$d" && -f "$d/ro-crate-metadata.json" ]]; then
+    INPUT_CRATE="$d"
+    break
+  fi
+done
+shopt -u nullglob
+
+if [[ -z "$INPUT_CRATE" ]]; then
+  echo "No input crate found under $INPUT_DIR/crates" >&2
+  exit 1
+fi
+
+if [[ ! -f "$INPUT_DIR/parameters.json" ]]; then
+  echo "Missing required $INPUT_DIR/parameters.json (assemble via agent request: bindings)" >&2
+  exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR/data" "$WORKSPACE/work"
+cd "$WORKSPACE/work"
+
+export INPUT_CRATE
+export SOURCE_CRATE_UUID
+SOURCE_CRATE_UUID="$(basename "$INPUT_CRATE")"
+
+python3 - <<'PY'
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+RCSB_SEARCH = "https://search.rcsb.org/rcsbsearch/v2/query"
+RCSB_PDB = "https://files.rcsb.org/download/{}.pdb"
+
+workspace = Path(os.environ["WORKSPACE"])
+work = workspace / "work"
+output_dir = Path(os.environ["OUTPUT_DIR"])
+input_crate = Path(os.environ["INPUT_CRATE"])
+params_path = Path(os.environ["INPUT_DIR"]) / "parameters.json"
+job_uuid = os.environ["JOB_UUID"]
+agent_uuid = os.environ["AGENT_UUID"]
+source_crate_uuid = os.environ["SOURCE_CRATE_UUID"]
+phenix = Path(os.environ["PHENIX"])
+phaser_bin = phenix / "phenix_bin" / "phenix.phaser"
+phenix_python = phenix / "phenix_bin" / "phenix.python"
+
+
+def progress(message: str, percent: int) -> None:
+    path = work / ".progress.json"
+    payload = {
+        "message": message,
+        "percent": percent,
+        "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    }
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(path)
+
+
+def die(msg: str, code: int = 1) -> None:
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def http_json(method: str, url: str, body=None, timeout: int = 120):
+    data = None if body is None else json.dumps(body).encode()
+    headers = {"Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as fh:
+            raw = fh.read().decode()
+            return json.loads(raw) if raw.strip() else {}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")
+        raise RuntimeError(f"{method} {url} -> HTTP {exc.code}: {detail}") from exc
+
+
+def normalize_sequence(raw: str) -> str:
+    lines = []
+    for line in raw.strip().splitlines():
+        s = line.strip()
+        if not s or s.startswith(">"):
+            continue
+        lines.append(re.sub(r"[^A-Za-z]", "", s).upper())
+    seq = "".join(lines)
+    if len(seq) < 10:
+        die(f"sequence too short after cleaning ({len(seq)} aa)")
+    return seq
+
+
+def identity_percent(value) -> float:
+    v = float(value)
+    if v <= 1.0:
+        return max(1.0, min(100.0, v * 100.0))
+    return max(1.0, min(100.0, v))
+
+
+def parse_phaser_log(log_text: str) -> dict:
+    """Parse authoritative Phaser log sections (Matthews / CCA, MR outcome).
+
+    The CELL CONTENT ANALYSIS module owns solvent content. Downstream steps
+    (densmod, packing notes) must use ``matthews_analysis.solvent_fraction``.
+    """
+    lines = log_text.splitlines()
+    out: dict = {
+        "matthews": None,
+        "matthews_analysis": None,
+        "mr_result": None,
+        "score_lines": [],
+        "exit_status": None,
+    }
+
+    # --- Bound CELL CONTENT ANALYSIS module (Phaser Module banner → next) ---
+    cca_start = None
+    cca_end = len(lines)
+    for i, ln in enumerate(lines):
+        if "*** Phaser Module: CELL CONTENT ANALYSIS" in ln:
+            cca_start = i
+            continue
+        if cca_start is not None and i > cca_start and ln.startswith(
+            "*** Phaser Module:"
+        ):
+            cca_end = i
+            break
+    # Fallback: first SUMMARY that contains Matthews header
+    if cca_start is None:
+        for i, ln in enumerate(lines):
+            if "MW to which Matthews applies" in ln:
+                cca_start = max(0, i - 5)
+                for j in range(i + 1, len(lines)):
+                    if lines[j].startswith("*** Phaser Module:"):
+                        cca_end = j
+                        break
+                break
+
+    matthews_rows: list[dict] = []
+    composition_mw = None
+    matthews_resolution = None
+    composition_type = None
+    most_prob_vm = None
+    most_prob_mw_asu = None
+    space_group = None
+    space_group_number = None
+    unit_cell: Optional[list[float]] = None
+    table_probs: list[dict] = []
+
+    if cca_start is not None:
+        cca = lines[cca_start:cca_end]
+        header_seen = False
+        in_scatter_table = False
+        scatter_body = False
+
+        for ln in cca:
+            m = re.search(
+                r"Space-Group Name \(Hall Symbol\):\s*(.+?)\s*\(", ln
+            )
+            if m:
+                space_group = m.group(1).strip()
+            m = re.search(r"Space-Group Number:\s*(\d+)", ln)
+            if m:
+                space_group_number = int(m.group(1))
+            m = re.search(
+                r"Unit Cell:\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)"
+                r"\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)",
+                ln,
+            )
+            if m:
+                unit_cell = [float(m.group(k)) for k in range(1, 7)]
+
+            m = re.search(r"Composition is of type:\s*(\S+)", ln)
+            if m:
+                composition_type = m.group(1)
+            m = re.search(r"MW to which Matthews applies:\s*([\d.]+)", ln)
+            if m:
+                composition_mw = float(m.group(1))
+            m = re.search(
+                r"Resolution for Matthews calculation:\s*([\d.]+)", ln
+            )
+            if m:
+                matthews_resolution = float(m.group(1))
+            m = re.search(
+                r"Most probable VM for resolution\s*=\s*([\d.]+)", ln
+            )
+            if m:
+                most_prob_vm = float(m.group(1))
+            m = re.search(
+                r"Most probable MW of protein in asu for resolution\s*=\s*([\d.]+)",
+                ln,
+            )
+            if m:
+                most_prob_mw_asu = float(m.group(1))
+
+            # $TABLE : Cell Content Analysis: absolute probabilities
+            if "$TABLE" in ln and "Cell Content Analysis" in ln:
+                in_scatter_table = True
+                scatter_body = False
+                continue
+            if in_scatter_table:
+                if "$$ loggraph $$" in ln or ln.strip() == "$$ loggraph $$":
+                    scatter_body = True
+                    continue
+                if scatter_body:
+                    if ln.strip() == "$$" or ln.strip().startswith("<!--"):
+                        in_scatter_table = False
+                        scatter_body = False
+                        continue
+                    m = re.match(r"^\s*(\d+)\s+([\d.eE+-]+)\s*$", ln)
+                    if m:
+                        table_probs.append(
+                            {
+                                "z": int(m.group(1)),
+                                "probability": float(m.group(2)),
+                            }
+                        )
+                    elif ln.strip() and not ln.strip().startswith("$"):
+                        in_scatter_table = False
+                        scatter_body = False
+
+            if re.search(
+                r"Z\s+MW\s+VM\s+% solvent\s+rel\.?\s*freq", ln, re.I
+            ):
+                header_seen = True
+                continue
+            if header_seen:
+                if re.match(r"^\s*Z is the number", ln) or not ln.strip():
+                    if matthews_rows:
+                        header_seen = False
+                    continue
+                # Z MW VM %solvent rel.freq.  [optional <== most probable]
+                m = re.match(
+                    r"^\s*(\d+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)"
+                    r"(.*)$",
+                    ln,
+                )
+                if m:
+                    flagged = (
+                        "<==" in m.group(6)
+                        or "most probable" in m.group(6).lower()
+                    )
+                    matthews_rows.append(
+                        {
+                            "z": int(m.group(1)),
+                            "mw": float(m.group(2)),
+                            "vm": float(m.group(3)),
+                            "solvent_pct": float(m.group(4)),
+                            "rel_freq": float(m.group(5)),
+                            "most_probable": flagged,
+                        }
+                    )
+                elif matthews_rows and not re.match(r"^\s*\d+", ln):
+                    header_seen = False
+
+        # Attach absolute probs from $TABLE when present
+        if table_probs:
+            by_z = {p["z"]: p["probability"] for p in table_probs}
+            for row in matthews_rows:
+                if row["z"] in by_z:
+                    row["probability"] = by_z[row["z"]]
+
+    # Authoritative most-probable: Phaser's "<== most probable" flag, else
+    # highest $TABLE probability / rel_freq.
+    most = next((r for r in matthews_rows if r.get("most_probable")), None)
+    if most is None and matthews_rows:
+        most = max(
+            matthews_rows,
+            key=lambda r: (
+                r.get("probability")
+                if r.get("probability") is not None
+                else r.get("rel_freq")
+                or 0.0
+            ),
+        )
+        if most is not None:
+            for r in matthews_rows:
+                r["most_probable"] = r is most
+
+    solvent_pct = most["solvent_pct"] if most else None
+    solvent_fraction = (
+        round(solvent_pct / 100.0, 4) if solvent_pct is not None else None
+    )
+
+    # Human-readable block — this is the authoritative Matthews section.
+    summary_lines = [
+        "MATTHEWS ANALYSIS (Phaser CELL CONTENT ANALYSIS — authoritative)",
+    ]
+    if space_group:
+        sg = space_group
+        if space_group_number is not None:
+            sg = f"{sg} (#{space_group_number})"
+        summary_lines.append(f"  Space group: {sg}")
+    if unit_cell:
+        a, b, c, al, be, ga = unit_cell
+        summary_lines.append(
+            f"  Unit cell: {a:.2f} {b:.2f} {c:.2f}  {al:.2f} {be:.2f} {ga:.2f}"
+        )
+    if composition_type:
+        summary_lines.append(f"  Composition type: {composition_type}")
+    if composition_mw is not None:
+        summary_lines.append(
+            f"  MW to which Matthews applies: {composition_mw:g}"
+        )
+    if matthews_resolution is not None:
+        summary_lines.append(
+            f"  Resolution for Matthews calculation: {matthews_resolution:g} Å"
+        )
+    if matthews_rows:
+        summary_lines.append(
+            "  Z       MW         VM    % solvent  rel.freq.  note"
+        )
+        for r in matthews_rows:
+            note = "<== most probable" if r.get("most_probable") else ""
+            summary_lines.append(
+                f"  {r['z']:<7d}{r['mw']:<11g}{r['vm']:<6.2f}"
+                f"{r['solvent_pct']:<10.2f}{r['rel_freq']:<10.3f}{note}"
+            )
+    if most is not None and solvent_fraction is not None:
+        summary_lines.append(
+            f"  AUTHORITATIVE solvent content: {solvent_pct:.2f}% "
+            f"(fraction {solvent_fraction:.4f}) at Z={most.get('z')} "
+            f"VM={most.get('vm')}"
+        )
+    if most_prob_vm is not None:
+        summary_lines.append(
+            f"  Most probable VM (resolution prior): {most_prob_vm:g}"
+        )
+    if most_prob_mw_asu is not None:
+        summary_lines.append(
+            f"  Most probable MW in ASU (resolution prior): {most_prob_mw_asu:g}"
+        )
+
+    matthews_analysis = {
+        "authoritative": True,
+        "source": "phaser_cell_content_analysis",
+        "space_group": space_group,
+        "space_group_number": space_group_number,
+        "unit_cell": unit_cell,
+        "composition_type": composition_type,
+        "composition_mw": composition_mw,
+        "resolution": matthews_resolution,
+        "rows": matthews_rows,
+        "table_probabilities": table_probs,
+        "most_probable": most,
+        "solvent_pct": solvent_pct,
+        "solvent_fraction": solvent_fraction,
+        "most_probable_vm_prior": most_prob_vm,
+        "most_probable_mw_asu_prior": most_prob_mw_asu,
+        "summary_text": "\n".join(summary_lines),
+    }
+    # Keep legacy key in sync (same authoritative numbers).
+    out["matthews"] = {
+        "composition_type": composition_type,
+        "composition_mw": composition_mw,
+        "resolution": matthews_resolution,
+        "rows": matthews_rows,
+        "most_probable": most,
+        "solvent_pct": solvent_pct,
+        "solvent_fraction": solvent_fraction,
+        "most_probable_vm": most_prob_vm,
+        "most_probable_mw_asu": most_prob_mw_asu,
+        "authoritative": True,
+        "space_group": space_group,
+        "unit_cell": unit_cell,
+    }
+    out["matthews_analysis"] = matthews_analysis
+
+    # --- MR outcome / exit (prefer final SOLUTION SET / summary lines) ---
+    for ln in lines:
+        if "EXIT STATUS:" in ln.upper():
+            out["exit_status"] = ln.split(":", 1)[-1].strip()
+    for ln in lines:
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith("SOLU SET") or re.search(
+            r"\b(RFZ|TFZ|LLG)\s*=", s
+        ):
+            if s not in out["score_lines"]:
+                out["score_lines"].append(s)
+        elif "Sorry - No solution" in s or "** SINGLE solution" in s:
+            if s not in out["score_lines"]:
+                out["score_lines"].append(s)
+    out["score_lines"] = out["score_lines"][:60]
+
+    sorry = any("Sorry - No solution" in ln for ln in lines)
+    single = any("** SINGLE solution" in ln for ln in lines)
+    no_pack = any("No solutions after final packing" in ln for ln in lines)
+    out["mr_result"] = {
+        "single_solution": single,
+        "no_solution": sorry,
+        "packing_failed": no_pack,
+        "exit_status": out["exit_status"],
+    }
+    return out
+
+
+def polymer_entity_length(entity_id: str) -> Optional[int]:
+    """entity_id like 1UBQ_1 → sample sequence length via RCSB data API."""
+    parts = entity_id.split("_")
+    if len(parts) < 2:
+        return None
+    entry, ent = parts[0], parts[1]
+    url = f"https://data.rcsb.org/rest/v1/core/polymer_entity/{entry}/{ent}"
+    try:
+        data = http_json("GET", url, timeout=60)
+    except Exception:
+        return None
+    poly = data.get("entity_poly") or {}
+    length = poly.get("rcsb_sample_sequence_length")
+    if length is None:
+        seq = poly.get("pdbx_seq_one_letter_code_can") or poly.get("pdbx_seq_one_letter_code")
+        if seq:
+            length = len(re.sub(r"\s+", "", seq))
+    return int(length) if length else None
+
+
+def rcsb_top_hit(sequence: str) -> dict:
+    """Prefer a polymer entity whose length is close to the query sequence."""
+    query = {
+        "query": {
+            "type": "terminal",
+            "service": "sequence",
+            "parameters": {
+                "evalue_cutoff": 1.0,
+                "identity_cutoff": 0.5,
+                "sequence_type": "protein",
+                "value": sequence,
+            },
+        },
+        "return_type": "polymer_entity",
+        "request_options": {
+            "scoring_strategy": "sequence",
+            "sort": [{"sort_by": "score", "direction": "desc"}],
+            "paginate": {"start": 0, "rows": 25},
+            "results_content_type": ["experimental"],
+        },
+    }
+    result = http_json("POST", RCSB_SEARCH, query, timeout=180)
+    hits = result.get("result_set") or []
+    if not hits:
+        die("RCSB sequence search returned no experimental hits")
+
+    qlen = len(sequence)
+    ranked = []
+    for h in hits:
+        eid = str(h.get("identifier") or "")
+        length = polymer_entity_length(eid)
+        if length is None:
+            continue
+        rel = abs(length - qlen) / max(qlen, 1)
+        ranked.append(
+            {
+                "identifier": eid,
+                "score": h.get("score"),
+                "length": length,
+                "length_delta_frac": rel,
+            }
+        )
+
+    if not ranked:
+        # Fallback: first entry id from polymer_entity identifier
+        top = hits[0]
+        eid = str(top.get("identifier") or "")
+        pdb_id = eid.split("_")[0].upper()
+        if len(pdb_id) != 4:
+            die(f"unexpected RCSB identifier: {eid!r}")
+        return {
+            "pdb_id": pdb_id,
+            "score": top.get("score"),
+            "identifier": eid,
+            "entity_length": None,
+            "result_set": hits[:10],
+        }
+
+    # Prefer length within 25%, then score
+    ranked.sort(key=lambda r: (r["length_delta_frac"], -(r["score"] or 0)))
+    best = ranked[0]
+    if best["length_delta_frac"] > 0.5:
+        print(
+            f"warning: best RCSB entity length delta {best['length_delta_frac']:.2f} "
+            f"({best['identifier']}, len={best['length']} vs query {qlen})",
+            file=sys.stderr,
+        )
+    pdb_id = best["identifier"].split("_")[0].upper()
+    return {
+        "pdb_id": pdb_id,
+        "score": best.get("score"),
+        "identifier": best["identifier"],
+        "entity_length": best["length"],
+        "result_set": ranked[:10],
+    }
+
+
+def download_pdb(pdb_id: str, dest: Path) -> None:
+    url = RCSB_PDB.format(pdb_id)
+    req = urllib.request.Request(url, headers={"Accept": "chemical/x-pdb"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as fh:
+            dest.write_bytes(fh.read())
+    except urllib.error.HTTPError as exc:
+        die(f"failed to download {url}: HTTP {exc.code}")
+
+
+def strip_pdb(src: Path, dest: Path, target_residues: Optional[int] = None) -> int:
+    """Keep ATOM/TER only; prefer a single chain closest to target_residues."""
+    chains: dict[str, list[str]] = {}
+    order: list[str] = []
+    with src.open(encoding="utf-8", errors="replace") as fin:
+        for line in fin:
+            if line.startswith("ATOM  "):
+                ch = line[21] if len(line) > 21 else " "
+                if ch not in chains:
+                    chains[ch] = []
+                    order.append(ch)
+                chains[ch].append(line)
+            elif line.startswith("TER") and order:
+                ch = line[21] if len(line) > 21 else order[-1]
+                if ch in chains:
+                    chains[ch].append(line)
+
+    if not chains:
+        die(f"no ATOM records in {src}")
+
+    def residue_count(lines: list[str]) -> int:
+        seen = set()
+        for ln in lines:
+            if ln.startswith("ATOM  "):
+                seen.add(ln[21:26])  # chain+resseq
+        return len(seen)
+
+    if target_residues and len(chains) > 1:
+        best_ch = min(
+            order,
+            key=lambda c: abs(residue_count(chains[c]) - target_residues),
+        )
+        selected = [best_ch]
+    else:
+        # Single-chain models, or no target: keep first chain only for ASU-sized MR model
+        selected = [order[0]]
+
+    kept = 0
+    with dest.open("w", encoding="utf-8") as fout:
+        for ch in selected:
+            for line in chains[ch]:
+                if line.startswith(("ATOM  ", "TER")):
+                    fout.write(line)
+                    kept += 1
+        fout.write("END\n")
+    if kept == 0:
+        die(f"no ATOM records after stripping {src}")
+    print(
+        f"Kept chain(s) {selected!r} (~{residue_count(chains[selected[0]])} residues)",
+        file=sys.stderr,
+    )
+    return kept
+
+
+def detect_labin(mtz_path: Path) -> str:
+    """Pick F/SIGF or I/SIGI labels using Phenix python."""
+    script = r"""
+import sys
+from iotbx import mtz
+m = mtz.object(file_name=sys.argv[1])
+labels = []
+for crystal in m.crystals():
+    for dataset in crystal.datasets():
+        for column in dataset.columns():
+            labels.append((column.label(), column.type()))
+# Prefer F/SIGF pairs, then I/SIGI
+f_labels = [l for l, t in labels if t in ("F", "G")]
+i_labels = [l for l, t in labels if t in ("J", "K")]
+sig_labels = {l for l, t in labels if t == "Q"}
+
+def pair(primary, prefixes):
+    for p in primary:
+        for cand in (f"SIG{p}", f"SIG{p.upper()}", f"Sig{p}", f"sig{p}"):
+            if cand in sig_labels or any(s.upper() == cand.upper() for s in sig_labels):
+                # resolve actual SIG label casing
+                for s in sig_labels:
+                    if s.upper() == cand.upper():
+                        return p, s
+        # common: FP/SIGFP already explicit
+        if p.upper().startswith("F") or p.upper().startswith("I"):
+            for s in sig_labels:
+                if s.upper().replace("SIG", "") == p.upper() or s.upper() == f"SIG{p.upper()}":
+                    return p, s
+    return None
+
+# Build map of base -> sigma by conventional names
+by_upper = {l.upper(): l for l, _ in labels}
+candidates = []
+for base, sig in [
+    ("F", "SIGF"), ("FP", "SIGFP"), ("Fobs", "SIGFobs"), ("FOBS", "SIGFOBS"),
+    ("I", "SIGI"), ("IMEAN", "SIGIMEAN"), ("Iobs", "SIGIobs"), ("IOBS", "SIGIOBS"),
+]:
+    if base.upper() in by_upper and sig.upper() in by_upper:
+        candidates.append((by_upper[base.upper()], by_upper[sig.upper()], base.upper().startswith("I")))
+
+if not candidates:
+    # fallback: first F-type + any SIG*
+    for lab, typ in labels:
+        if typ in ("F", "G"):
+            for slab, st in labels:
+                if st == "Q" and "SIG" in slab.upper():
+                    candidates.append((lab, slab, False))
+                    break
+        if candidates:
+            break
+    if not candidates:
+        for lab, typ in labels:
+            if typ in ("J", "K"):
+                for slab, st in labels:
+                    if st == "Q" and "SIG" in slab.upper():
+                        candidates.append((lab, slab, True))
+                        break
+            if candidates:
+                break
+
+if not candidates:
+    print("AVAILABLE_LABELS=" + ",".join(f"{l}:{t}" for l, t in labels), file=sys.stderr)
+    sys.exit(2)
+
+lab, slab, is_i = candidates[0]
+if is_i:
+    print(f"I={lab} SIGI={slab}")
+else:
+    print(f"F={lab} SIGF={slab}")
+"""
+    proc = subprocess.run(
+        [str(phenix_python), "-c", script, str(mtz_path)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        print(proc.stderr, file=sys.stderr)
+        die(f"could not detect MTZ amplitude/intensity labels for {mtz_path}")
+    line = proc.stdout.strip().splitlines()[-1].strip()
+    if not (line.startswith("F=") or line.startswith("I=")):
+        die(f"unexpected LABIN detection output: {line!r}")
+    return line
+
+
+def write_crate(file_nodes: list[dict]) -> None:
+    crate = {
+        "@context": [
+            "https://w3id.org/ro/crate/1.2/context",
+            {
+                "lambda": "http://w3id.org/lambda/",
+                "lambdax": "https://lambda-ber.github.io/profile/mx/0.2.0/terms/",
+            },
+        ],
+        "@graph": [
+            {
+                "@id": "ro-crate-metadata.json",
+                "@type": "CreativeWork",
+                "conformsTo": {"@id": "https://w3id.org/ro/crate/1.2"},
+                "about": {"@id": "./"},
+            },
+            {
+                "@id": "./",
+                "@type": ["Dataset", "lambda:Dataset"],
+                "identifier": {
+                    "@type": "PropertyValue",
+                    "propertyID": "UUID",
+                    "value": job_uuid,
+                },
+                "name": "Phaser MR product",
+                "description": (
+                    f"Minimal Phaser MR_AUTO for job {job_uuid} "
+                    f"(source crate {source_crate_uuid})"
+                ),
+            },
+            *file_nodes,
+        ],
+    }
+    (output_dir / "ro-crate-metadata.json").write_text(
+        json.dumps(crate, indent=2), encoding="utf-8"
+    )
+
+
+def file_node(rel: str, encoding: str) -> dict:
+    path = output_dir / rel
+    return {
+        "@id": rel,
+        "@type": "File",
+        "name": Path(rel).name,
+        "encodingFormat": encoding,
+        "contentSize": path.stat().st_size,
+    }
+
+
+def resolve_mtz(input_crate: Path, mtz_name: str) -> Path:
+    """Resolve MTZ from crate ``lambdax:referencesArtefacts`` (absolute @id).
+
+    Canonical TMP_LAMBDA sidecars list diffraction products as::
+
+        lambdax:referencesArtefacts:
+          - @id: …/data/truncate-unique.mtz
+          - @id: …/data/aimless_alldata-unique.mtz
+          - @id: …/data/staraniso_alldata-unique.mtz
+
+    Prefer the absolute ``staraniso_alldata-unique.mtz`` @id from that list.
+    """
+    preferred = (mtz_name or "staraniso_alldata-unique.mtz").strip()
+    preferred_base = Path(preferred).name
+    crate_meta = input_crate / "ro-crate-metadata.json"
+    if not crate_meta.is_file():
+        die(f"missing {crate_meta}")
+
+    try:
+        graph = json.loads(crate_meta.read_text(encoding="utf-8")).get("@graph") or []
+    except Exception as exc:
+        die(f"could not parse crate metadata: {exc}")
+
+    # 1) Primary: lambdax:referencesArtefacts on any node (usually the sidecar)
+    referenced: list[Path] = []
+    for node in graph:
+        if not isinstance(node, dict):
+            continue
+        refs = node.get("lambdax:referencesArtefacts") or node.get("referencesArtefacts")
+        if not isinstance(refs, list):
+            continue
+        for ref in refs:
+            if isinstance(ref, dict):
+                fid = str(ref.get("@id") or "").strip()
+            else:
+                fid = str(ref).strip()
+            if fid.endswith(".mtz"):
+                referenced.append(Path(fid))
+
+    if referenced:
+        print("lambdax:referencesArtefacts MTZs:", file=sys.stderr)
+        for p in referenced:
+            mark = " <-- preferred" if p.name == preferred_base else ""
+            print(f"  {p}{mark}", file=sys.stderr)
+
+    for cand in referenced:
+        if cand.name != preferred_base:
+            continue
+        if cand.is_file():
+            print(f"Using MTZ from lambdax:referencesArtefacts: {cand}", file=sys.stderr)
+            return cand
+        print(
+            f"warning: referenced MTZ missing on disk: {cand}",
+            file=sys.stderr,
+        )
+
+    # 2) Same basename via File nodes with absolute @id
+    for node in graph:
+        if not isinstance(node, dict):
+            continue
+        types = node.get("@type")
+        type_list = types if isinstance(types, list) else [types]
+        if not any(str(t).endswith("File") or t == "File" for t in type_list if t):
+            continue
+        fid = str(node.get("@id") or "").strip()
+        name = str(node.get("name") or Path(fid).name)
+        if name != preferred_base and Path(fid).name != preferred_base:
+            continue
+        p = Path(fid)
+        if p.is_absolute() and p.is_file():
+            print(f"Using MTZ from File @id: {p}", file=sys.stderr)
+            return p
+
+    # 3) Last resort: bytes next to the hydrated crate
+    for cand in (
+        input_crate / "data" / preferred_base,
+        input_crate / preferred_base,
+    ):
+        if cand.is_file():
+            print(
+                f"warning: using crate-local fallback MTZ: {cand.resolve()}",
+                file=sys.stderr,
+            )
+            return cand.resolve()
+
+    die(
+        f"MTZ {preferred_base!r} not found. Expected it under "
+        f"lambdax:referencesArtefacts as an absolute path ending in "
+        f"/data/{preferred_base}."
+    )
+    raise AssertionError("unreachable")
+
+
+# --- main ---
+progress("reading parameters", 5)
+params = json.loads(params_path.read_text(encoding="utf-8"))
+sequence_raw = params.get("sequence")
+if not sequence_raw or not str(sequence_raw).strip():
+    die("parameters.sequence is required")
+
+copies = int(params.get("copies", 1))
+if copies < 1:
+    die("parameters.copies must be >= 1")
+
+high_res = float(params.get("high_res", 4.0))
+if high_res <= 0:
+    die("parameters.high_res must be > 0")
+
+ident_pct = identity_percent(params.get("identity", 0.5))
+# Back-compat: accept legacy mtz_relpath as a basename/path hint.
+mtz_name = str(
+    params.get("mtz_name")
+    or params.get("mtz_relpath")
+    or "staraniso_alldata-unique.mtz"
+)
+
+# Translational NCS — default OFF (user request / packing+tNCS often fights copies).
+_raw_tncs = params.get("tncs", False)
+if isinstance(_raw_tncs, str):
+    tncs = _raw_tncs.strip().lower() in {"1", "true", "yes", "on"}
+else:
+    tncs = bool(_raw_tncs)
+tncs_keyword = "TNCS USE ON" if tncs else "TNCS USE OFF"
+
+
+def build_phaser_script(*, root: str, pack_line: Optional[str] = None) -> str:
+    lines = [
+        "MODE MR_AUTO",
+        f"HKLIN {mtz_path}",
+        f"LABIN {labin}",
+        f"ENSEMBLE model PDBFILE {bare} IDENTITY {ident_pct:.1f}",
+        f"COMPOSITION PROTEIN SEQUENCE_FILE {fasta} NUMBER {copies}",
+        f"SEARCH ENSEMBLE model NUM {copies}",
+        f"RESOLUTION 50.0 {high_res}",
+        tncs_keyword,
+    ]
+    if pack_line:
+        lines.append(pack_line)
+    lines.append(f"ROOT {root}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+progress("resolving MTZ", 8)
+mtz_path = resolve_mtz(input_crate, mtz_name)
+print(f"Using MTZ: {mtz_path}", file=sys.stderr)
+print(f"{tncs_keyword}", file=sys.stderr)
+
+progress("writing sequence", 10)
+seq = normalize_sequence(str(sequence_raw))
+fasta = work / "search.fasta"
+fasta.write_text(f">target\n{seq}\n", encoding="utf-8")
+
+progress("RCSB sequence search", 20)
+hit = rcsb_top_hit(seq)
+pdb_id = hit["pdb_id"]
+print(f"RCSB top hit: {pdb_id} (score={hit.get('score')})", file=sys.stderr)
+
+progress(f"downloading {pdb_id}", 35)
+raw_pdb = work / f"{pdb_id}.pdb"
+download_pdb(pdb_id, raw_pdb)
+
+progress("stripping waters/ligands", 45)
+bare = work / "bare_model.pdb"
+n_lines = strip_pdb(raw_pdb, bare, target_residues=len(seq))
+print(f"Stripped model: {n_lines} lines kept", file=sys.stderr)
+
+progress("detecting MTZ labels", 50)
+labin = detect_labin(mtz_path)
+print(f"LABIN {labin}", file=sys.stderr)
+
+progress("running phenix.phaser", 55)
+script_path = work / "phaser_mr.com"
+# labin/bare/fasta/mtz_path must exist before build — set above.
+script_path.write_text(build_phaser_script(root="phaser_mr"), encoding="utf-8")
+
+log_path = work / "phaser.log"
+
+
+def run_phaser(script_text: str, logf) -> int:
+    logf.write(f"# phenix.phaser script:\n{script_text}\n")
+    logf.write("# --- begin phaser ---\n")
+    logf.flush()
+    proc = subprocess.run(
+        [str(phaser_bin)],
+        input=script_text,
+        stdout=logf,
+        stderr=subprocess.STDOUT,
+        text=True,
+        cwd=str(work),
+    )
+    return proc.returncode
+
+
+with log_path.open("w", encoding="utf-8") as logf:
+    phaser_rc = run_phaser(script_path.read_text(encoding="utf-8"), logf)
+
+# Collect ROOT products (may only be .com when packing rejects all solutions).
+copied_products: list[str] = []
+
+# Copy products into OUTPUT_DIR/data
+progress("collecting products", 85)
+data = output_dir / "data"
+data.mkdir(parents=True, exist_ok=True)
+
+shutil.copy2(bare, data / "bare_model.pdb")
+shutil.copy2(log_path, data / "phaser.log")
+
+search_hit = {
+    "pdb_id": pdb_id,
+    "score": hit.get("score"),
+    "identifier": hit.get("identifier"),
+    "entity_length": hit.get("entity_length"),
+    "download_url": RCSB_PDB.format(pdb_id),
+    "top_hits": hit.get("result_set") or [],
+}
+(data / "search_hit.json").write_text(json.dumps(search_hit, indent=2), encoding="utf-8")
+
+packing_relaxed = False
+for p in sorted(work.glob("phaser_mr*")):
+    if p.is_file():
+        shutil.copy2(p, data / p.name)
+        copied_products.append(p.name)
+
+
+def _prefer_solution(names: list[str], suffix: str) -> Optional[str]:
+    """Prefer numbered solution files (phaser_mr.1.*) over unnumbered."""
+    matches = [n for n in names if n.endswith(suffix)]
+    if not matches:
+        return None
+    numbered = sorted(
+        matches,
+        key=lambda n: (
+            0 if re.search(r"\.\d+\." + re.escape(suffix.lstrip(".")), n) else 1,
+            n,
+        ),
+    )
+    return numbered[0]
+
+
+solution_pdb_name = _prefer_solution(copied_products, ".pdb")
+solution_mtz_name = _prefer_solution(copied_products, ".mtz")
+
+# If packing culled every peak, Phaser writes no PDB/MTZ — retry with a very
+# loose packing cutoff so we still get a placed model for density viewing.
+if solution_pdb_name is None and phaser_rc == 0:
+    progress("phaser loose-packing retry (for density)", 72)
+    packing_relaxed = True
+    unpack_root = "phaser_mr_unpack"
+    # Phaser-2.8: PACK OFF is invalid; use SELECT CUTOFF (%% Cα clashes allowed).
+    unpack_script = build_phaser_script(
+        root=unpack_root,
+        pack_line="PACK SELECT CUTOFF 100",
+    )
+    (work / "phaser_mr_unpack.com").write_text(unpack_script, encoding="utf-8")
+    with log_path.open("a", encoding="utf-8") as logf:
+        logf.write("\n# --- loose packing retry (density / placed model) ---\n")
+        unpack_rc = run_phaser(unpack_script, logf)
+    if unpack_rc != 0:
+        print(
+            f"Loose-packing retry exited {unpack_rc} (non-fatal)",
+            file=sys.stderr,
+        )
+    for p in sorted(work.glob(f"{unpack_root}*")):
+        if p.is_file():
+            dest_name = p.name
+            shutil.copy2(p, data / dest_name)
+            if dest_name not in copied_products:
+                copied_products.append(dest_name)
+    solution_pdb_name = _prefer_solution(copied_products, ".pdb")
+    solution_mtz_name = _prefer_solution(copied_products, ".mtz")
+    if solution_pdb_name:
+        print(
+            f"Loose-packing placed model: {solution_pdb_name} "
+            f"(packing not validated — for density viewing)",
+            file=sys.stderr,
+        )
+
+view_pdb = f"data/{solution_pdb_name}" if solution_pdb_name else "data/bare_model.pdb"
+solution_pdb = f"data/{solution_pdb_name}" if solution_pdb_name else None
+solution_mtz = f"data/{solution_mtz_name}" if solution_mtz_name else None
+
+# Parse Phaser log (Matthews CCA is authoritative for solvent content).
+log_text = log_path.read_text(encoding="utf-8", errors="replace")
+phaser_parsed = parse_phaser_log(log_text)
+matthews_analysis = phaser_parsed.get("matthews_analysis") or {}
+matthews = phaser_parsed.get("matthews") or matthews_analysis
+score_lines = phaser_parsed.get("score_lines") or []
+if matthews_analysis.get("summary_text"):
+    (data / "matthews_analysis.txt").write_text(
+        matthews_analysis["summary_text"] + "\n", encoding="utf-8"
+    )
+if matthews_analysis.get("most_probable") or matthews.get("most_probable"):
+    mp = (matthews_analysis.get("most_probable") or matthews.get("most_probable"))
+    solvent_f = matthews_analysis.get("solvent_fraction") or matthews.get(
+        "solvent_fraction"
+    )
+    print(
+        f"Matthews (authoritative): Z={mp.get('z')} VM={mp.get('vm')} "
+        f"solvent={mp.get('solvent_pct')}% (frac={solvent_f})",
+        file=sys.stderr,
+    )
+    print(matthews_analysis.get("summary_text") or "", file=sys.stderr)
+
+# Density maps for Mol* — prefer Phaser MTZ coeffs; else phenix.maps(model + data).
+density_map: Optional[str] = None
+density_maps: list[str] = []
+map_note: Optional[str] = None
+denmod_mtz_rel: Optional[str] = None
+
+
+def _collect_map_files(src_dir: Path) -> None:
+    global density_map
+    for p in sorted(src_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in {".ccp4", ".map"}:
+            continue
+        dest_name = f"density_{p.name}"
+        dest = data / dest_name
+        if not dest.exists():
+            shutil.copy2(p, dest)
+        rel = f"data/{dest_name}"
+        if rel not in density_maps:
+            density_maps.append(rel)
+    for candidate in density_maps:
+        low = candidate.lower()
+        if "2fofc" in low or "2mfo" in low or "fwt" in low:
+            density_map = candidate
+            break
+    if density_maps and density_map is None:
+        density_map = density_maps[0]
+
+
+if solution_pdb_name and phaser_rc == 0:
+    progress("computing density maps", 90)
+    map_work = work / "maps"
+    map_work.mkdir(parents=True, exist_ok=True)
+
+    # 1) FFT Phaser map coefficients when present
+    if solution_mtz_name:
+        mtz2map = phenix / "phenix_bin" / "phenix.mtz2map"
+        if mtz2map.is_file():
+            map_log = work / "mtz2map.log"
+            with map_log.open("w", encoding="utf-8") as logf:
+                map_proc = subprocess.run(
+                    [
+                        str(mtz2map),
+                        f"mtz_file={data / solution_mtz_name}",
+                        f"pdb_file={data / solution_pdb_name}",
+                        f"output.directory={map_work}",
+                        "output.format=ccp4",
+                    ],
+                    stdout=logf,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    cwd=str(map_work),
+                )
+            if map_proc.returncode != 0:
+                print(
+                    f"phenix.mtz2map exited {map_proc.returncode} (non-fatal)",
+                    file=sys.stderr,
+                )
+            _collect_map_files(map_work)
+            if density_maps:
+                map_note = "from Phaser MTZ coefficients (phenix.mtz2map)"
+
+    # 2) Fallback: phenix.maps from placed PDB + experimental F/SIGF MTZ
+    if not density_maps:
+        maps_bin = phenix / "phenix_bin" / "phenix.maps"
+        if maps_bin.is_file():
+            maps_log = work / "phenix_maps.log"
+            with maps_log.open("w", encoding="utf-8") as logf:
+                maps_proc = subprocess.run(
+                    [
+                        str(maps_bin),
+                        str(data / solution_pdb_name),
+                        str(mtz_path),
+                    ],
+                    stdout=logf,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    cwd=str(map_work),
+                )
+            if maps_proc.returncode != 0:
+                print(
+                    f"phenix.maps exited {maps_proc.returncode} (non-fatal); "
+                    f"see {maps_log}",
+                    file=sys.stderr,
+                )
+            _collect_map_files(map_work)
+            if density_maps:
+                map_note = "from phenix.maps (placed model + experimental MTZ)"
+
+    if density_maps:
+        print(f"Density maps: {', '.join(density_maps)} ({map_note})", file=sys.stderr)
+    else:
+        print("No density maps produced", file=sys.stderr)
+
+    # 3) RESOLVE density modification — solvent from Phaser Matthews (authoritative)
+    densmod_on = True
+    _raw_dm = params.get("density_modify", True)
+    if isinstance(_raw_dm, str):
+        densmod_on = _raw_dm.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        densmod_on = bool(_raw_dm)
+
+    if densmod_on and solution_pdb_name:
+        progress("RESOLVE density modification", 92)
+        dm_dir = work / "densmod"
+        dm_dir.mkdir(parents=True, exist_ok=True)
+
+        solvent_f = matthews_analysis.get("solvent_fraction") or matthews.get(
+            "solvent_fraction"
+        )
+        # Explicit user override wins; else Phaser Matthews CCA; else 0.5.
+        user_solvent = params.get("solvent_content")
+        if user_solvent is not None:
+            try:
+                solvent_f = float(user_solvent)
+            except (TypeError, ValueError):
+                pass
+        if solvent_f is None or not (0.05 < float(solvent_f) < 0.95):
+            solvent_f = 0.5
+        solvent_f = float(solvent_f)
+
+        densmod_bin = phenix / "phenix_bin" / "phenix.density_modification"
+        dm_log = work / "densmod.log"
+        denmod_mtz_path = dm_dir / "denmod.mtz"
+        if densmod_bin.is_file():
+            dm_cmd = [
+                str(densmod_bin),
+                f"pdb_file={data / solution_pdb_name}",
+                f"data_file={mtz_path}",
+                "data_labels=F,SIGF",
+                f"denmod.solvent_content={solvent_f:.4f}",
+                f"output_files.output_mtz={denmod_mtz_path}",
+            ]
+            # Prefer Phaser map coefficients (FWT/PHWT) as densmod starting phases.
+            if solution_mtz_name:
+                dm_cmd.extend(
+                    [
+                        f"map_coeffs_file={data / solution_mtz_name}",
+                        "map_coeffs_labels=FWT,PHWT",
+                    ]
+                )
+            with dm_log.open("w", encoding="utf-8") as logf:
+                dm_proc = subprocess.run(
+                    dm_cmd,
+                    stdout=logf,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    cwd=str(dm_dir),
+                )
+            if dm_proc.returncode != 0:
+                print(
+                    f"phenix.density_modification exited {dm_proc.returncode} "
+                    f"(non-fatal); see {dm_log}",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"Density modification OK "
+                    f"(Matthews solvent={solvent_f:.4f})",
+                    file=sys.stderr,
+                )
+
+        if denmod_mtz_path.is_file():
+            shutil.copy2(denmod_mtz_path, data / "denmod.mtz")
+            denmod_mtz_rel = "data/denmod.mtz"
+            mtz2map = phenix / "phenix_bin" / "phenix.mtz2map"
+            if mtz2map.is_file():
+                with (work / "mtz2map_denmod.log").open("w", encoding="utf-8") as logf:
+                    subprocess.run(
+                        [
+                            str(mtz2map),
+                            f"mtz_file={denmod_mtz_path}",
+                            f"pdb_file={data / solution_pdb_name}",
+                            f"output.directory={dm_dir}",
+                            "output.format=ccp4",
+                        ],
+                        stdout=logf,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        cwd=str(dm_dir),
+                    )
+            before = set(density_maps)
+            _collect_map_files(dm_dir)
+            new_maps = [m for m in density_maps if m not in before]
+            if new_maps:
+                density_map = new_maps[0]
+                for candidate in new_maps:
+                    low = candidate.lower()
+                    if "2fofc" in low or "2mfo" in low or "fwt" in low:
+                        density_map = candidate
+                        break
+                map_note = (
+                    "RESOLVE density modification "
+                    f"(phenix.density_modification, "
+                    f"Matthews solvent={solvent_f:.4f})"
+                )
+                print(f"Densmod maps: {', '.join(new_maps)}", file=sys.stderr)
+
+summary = {
+    "job_uuid": job_uuid,
+    "agent_uuid": agent_uuid,
+    "source_crate_uuid": source_crate_uuid,
+    "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    "status": "ok" if phaser_rc == 0 else "failed",
+    "phaser_exit_code": phaser_rc,
+    "packing_relaxed": packing_relaxed,
+    "parameters": {
+        "copies": copies,
+        "high_res": high_res,
+        "identity_fraction_or_percent_input": params.get("identity", 0.5),
+        "identity_percent": ident_pct,
+        "mtz_name": Path(mtz_name).name,
+        "sequence_length": len(seq),
+        "tncs": tncs,
+        "tncs_keyword": tncs_keyword,
+    },
+    "mtz_path": str(mtz_path),
+    "labin": labin,
+    "search_model_pdb_id": pdb_id,
+    "phaser_products": copied_products,
+    "solution_pdb": solution_pdb,
+    "solution_mtz": solution_mtz,
+    "view_pdb": view_pdb,
+    "density_map": density_map,
+    "density_maps": density_maps,
+    "density_note": map_note,
+    "denmod_mtz": denmod_mtz_rel,
+    "matthews": matthews,
+    "matthews_analysis": matthews_analysis,
+    "mr_result": phaser_parsed.get("mr_result"),
+    "phaser_exit_status": phaser_parsed.get("exit_status"),
+    "score_lines": score_lines,
+}
+(data / "mr_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+if phaser_rc != 0:
+    print(
+        f"phenix.phaser exited {phaser_rc}; wrote partial data/ under {data} "
+        f"(see data/phaser.log). Failing job.",
+        file=sys.stderr,
+    )
+    sys.exit(phaser_rc)
+
+progress("writing RO-Crate", 95)
+nodes = [
+    file_node("data/mr_summary.json", "application/json"),
+    file_node("data/search_hit.json", "application/json"),
+    file_node("data/bare_model.pdb", "chemical/x-pdb"),
+    file_node("data/phaser.log", "text/plain"),
+]
+if (data / "matthews_analysis.txt").is_file():
+    nodes.append(file_node("data/matthews_analysis.txt", "text/plain"))
+for name in copied_products:
+    enc = "chemical/x-pdb" if name.endswith(".pdb") else (
+        "application/octet-stream" if name.endswith(".mtz") else "application/octet-stream"
+    )
+    nodes.append(file_node(f"data/{name}", enc))
+for rel in density_maps:
+    nodes.append(file_node(rel, "application/octet-stream"))
+if denmod_mtz_rel:
+    nodes.append(file_node(denmod_mtz_rel, "application/octet-stream"))
+
+write_crate(nodes)
+progress("done", 100)
+print(f"Wrote RO-Crate and {len(copied_products)} Phaser product file(s)", file=sys.stderr)
+if density_map:
+    print(f"Primary density map: {density_map}", file=sys.stderr)
+PY
+
+echo "Wrote $OUTPUT_DIR/ro-crate-metadata.json"

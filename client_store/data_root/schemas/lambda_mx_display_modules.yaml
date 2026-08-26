@@ -1,0 +1,233 @@
+# Display modules — facility-owned presentation for agent job output.
+#
+# Referenced from lambda_mx_dashboard.yaml → crate.actions.agents.<uuid>.display
+# Agents stay UI-agnostic; they only declare output files in agent.yaml.
+#
+# Version: 0.1.0
+
+version: "0.1.0"
+
+# JSON anchor file for dotted-path resolution (summary items, table rows).
+# Additional files (images) are fetched separately from the job output dir.
+
+module_kinds:
+  summary:
+    description: Key-value facts from primary_file JSON
+    fields:
+      title: optional section heading
+      items:
+        - label: display label
+          from: dotted JSON path in primary_file
+          suffix: optional string appended to formatted value
+          emphasis: true  # large headline (first emphasis wins as hero)
+
+  graph:
+    description: Directed graph from nodes[] + edges[] in primary JSON
+    fields:
+      from: dotted path to graph object
+      highlight_field: node boolean field (default assigned)
+
+  row:
+    description: Side-by-side layout (responsive 2-column)
+    fields:
+      title: optional row heading
+      modules: [ nested module specs ]
+
+  kv:
+    description: Object map rendered as key | value table
+    fields:
+      from: dotted path to object
+      value_decimals: number formatting
+
+  table:
+    description: Tabular rows from a JSON array in primary_file
+    fields:
+      title: optional section heading
+      rows: dotted path to row array OR string[] with primitive string
+      primitive: string  # index + value columns for string arrays
+      value_label: header for string column
+      limit: max rows (default 15)
+      columns:
+        - field: row object key
+          label: column header
+          link: optional row key for href
+          type: number | string | array
+          decimals: number formatting
+          join: array join string
+          wrap: true
+
+  image:
+    description: PNG/JPEG/WebP from job output directory
+    fields:
+      title: optional caption heading
+      file: relative path under output/ (e.g. data/ita_plate.png)
+      from: optional dotted path in primary_file → relative path string
+      alt: accessibility text
+
+  json:
+    description: Collapsible raw JSON subtree (debug / power users)
+    fields:
+      title: details summary label
+      from: dotted path; omit for entire primary_file
+
+  density_popup:
+    description: >
+      Button that opens a Mol* OS popup for a job-output PDB and optional
+      CCP4/MAP density (served via agent /output/raw).
+    fields:
+      title: optional section heading
+      label: button text
+      pdb_from: dotted path → relative PDB under output/ (e.g. view_pdb)
+      pdb_file: static relative PDB path
+      map_from: dotted path → relative CCP4/MAP path
+      map_file: static relative map path
+
+# --- Example: PDB lattice search (035c162b-…) ---
+
+examples:
+  pdb_lattice_search:
+    agent_uuid: "035c162b-c868-4fd7-bd7d-f9404dfb250c"
+    display:
+      primary_file: data/pdb_matches.json
+      modules:
+        - kind: summary
+          title: PDB lattice matches
+          items:
+            - label: Matches
+              from: count
+              emphasis: true
+            - label: Resolved SG
+              from: query.sg_hm
+            - label: Input SG
+              from: query.sg
+            - label: Cutoff
+              from: query.cutoff
+              suffix: " Å"
+            - label: Same HM
+              from: query.same_hm
+        - kind: table
+          rows: table
+          limit: 15
+          columns:
+            - field: pdb_id
+              label: PDB
+              link: pdb_entry_url
+            - field: distance
+              label: Delta
+              type: number
+              decimals: 3
+            - field: space_group
+              label: Space group
+            - field: protein_name
+              label: Protein
+              wrap: true
+
+  symmetry_explore:
+    agent_uuid: "fe8df266-cb9a-4f32-84d1-43427645c60c"
+    display:
+      primary_file: data/symmetry_report.json
+      modules:
+        - kind: summary
+          title: Metric holohedry
+          items:
+            - label: Holohedry
+              from: metric_symmetry.crystal_system
+              emphasis: true
+            - label: Order
+              from: metric_symmetry.order
+            - label: Space group
+              from: query.sg_hm
+            - label: Max Δ (Le Page)
+              from: query.max_delta_deg
+              suffix: "°"
+        - kind: row
+          title: ITA plate & general positions
+          modules:
+            - kind: image
+              from: files.ita_plate
+            - kind: table
+              title: General positions
+              rows: metric_symmetry.operations
+              primitive: string
+              value_label: xyz
+        - kind: summary
+          title: Space-group subgroups
+          items:
+            - label: Subgroups
+              from: space_group_graph.n_subgroups
+              emphasis: true
+            - label: Assigned
+              from: space_group_graph.assigned
+        - kind: graph
+          title: Space-group subgroup graph
+          from: space_group_graph
+          node_label: label
+          highlight_field: assigned
+        - kind: table
+          title: Subgroups in reference setting
+          rows: space_group_graph.nodes
+          limit: 20
+          columns:
+            - field: sg_hm
+              label: Reference HM
+            - field: sg_number
+              label: IT #
+            - field: order
+              label: Order
+            - field: extended_hm
+              label: Extended HM
+            - field: cob_to_reference
+              label: CoB → ref
+            - field: reference_cell
+              label: Reference cell
+              type: array
+              join: " "
+              decimals: 2
+        - kind: summary
+          title: Kurlin roots
+          items:
+            - label: Invariant
+              from: kurlin_roots.invariant
+        - kind: row
+          modules:
+            - kind: kv
+              title: Root products
+              from: kurlin_roots.root_products
+            - kind: kv
+              title: Conorms
+              from: kurlin_roots.conorms
+        - kind: graph
+          title: Holohedry descent graph
+          from: holohedry_graph
+        - kind: table
+          title: Kurlin deficiency spectrum
+          rows: holohedry_graph.spectrum_sorted
+          limit: 10
+          columns:
+            - field: system
+              label: System
+            - field: kurlin_deficiency_A
+              label: Delta
+              type: number
+              decimals: 4
+
+  phaser_mr:
+    agent_uuid: "9b37b68b-fcb9-4291-9a57-5d1de2cbaac5"
+    display:
+      primary_file: data/mr_summary.json
+      modules:
+        - kind: summary
+          title: Phaser MR
+          items:
+            - label: Status
+              from: status
+              emphasis: true
+            - label: Search model
+              from: search_model_pdb_id
+        - kind: density_popup
+          title: Molecular density
+          label: Open density viewer
+          pdb_from: view_pdb
+          map_from: density_map
+        - kind: json
+          title: Full MR summary

@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Level-zero agent: copy input crate metadata, emit minimal product RO-Crate.
+set -euo pipefail
+
+INPUT_CRATE=""
+for d in "$INPUT_DIR/crates"/*; do
+  if [[ -f "$d/ro-crate-metadata.json" ]]; then
+    INPUT_CRATE="$d"
+    break
+  fi
+done
+
+if [[ -z "$INPUT_CRATE" ]]; then
+  echo "No input crate found under $INPUT_DIR/crates" >&2
+  exit 1
+fi
+
+INPUT_UUID="$(basename "$INPUT_CRATE")"
+mkdir -p "$OUTPUT_DIR/data"
+
+python3 - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+workspace = Path(os.environ["WORKSPACE"])
+output_dir = Path(os.environ["OUTPUT_DIR"])
+input_dir = Path(os.environ["INPUT_DIR"])
+job_uuid = os.environ["JOB_UUID"]
+agent_uuid = os.environ["AGENT_UUID"]
+
+input_crate_dir = next(input_dir.joinpath("crates").iterdir())
+input_uuid = input_crate_dir.name
+input_crate = json.loads((input_crate_dir / "ro-crate-metadata.json").read_text())
+
+result = {
+    "job_uuid": job_uuid,
+    "agent_uuid": agent_uuid,
+    "source_crate_uuid": input_uuid,
+    "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    "note": "level-zero agent product",
+}
+result_path = output_dir / "data" / "result.json"
+result_path.parent.mkdir(parents=True, exist_ok=True)
+result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+output_uuid = job_uuid
+root = input_crate.get("@graph", [{}])[1] if len(input_crate.get("@graph", [])) > 1 else {}
+title = root.get("name") if isinstance(root, dict) else None
+
+crate = {
+    "@context": [
+        "https://w3id.org/ro/crate/1.2/context",
+        {"lambda": "http://w3id.org/lambda/", "lambdax": "https://lambda-ber.github.io/profile/mx/0.2.0/terms/"},
+    ],
+    "@graph": [
+        {
+            "@id": "ro-crate-metadata.json",
+            "@type": "CreativeWork",
+            "conformsTo": {"@id": "https://w3id.org/ro/crate/1.2"},
+            "about": {"@id": "./"},
+        },
+        {
+            "@id": "./",
+            "@type": ["Dataset", "lambda:Dataset"],
+            "identifier": {
+                "@type": "PropertyValue",
+                "propertyID": "UUID",
+                "value": output_uuid,
+            },
+            "name": title or f"Agent product {output_uuid}",
+            "description": f"Output of level-zero agent for job {job_uuid}",
+        },
+        {
+            "@id": "data/result.json",
+            "@type": "File",
+            "name": "result.json",
+            "encodingFormat": "application/json",
+            "contentSize": result_path.stat().st_size,
+        },
+    ],
+}
+
+(output_dir / "ro-crate-metadata.json").write_text(json.dumps(crate, indent=2), encoding="utf-8")
+PY
+
+echo "Wrote $OUTPUT_DIR/ro-crate-metadata.json"
