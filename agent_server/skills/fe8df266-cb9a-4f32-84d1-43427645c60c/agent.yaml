@@ -8,8 +8,7 @@ runner:
   entrypoint: "./run"
   cwd: work
   timeout_seconds: 3600
-  env:
-    PYTHONPATH: "/Users/phzwart/Projects/agentsg/agentsg/src"
+  env: {}
 
 input:
   items:

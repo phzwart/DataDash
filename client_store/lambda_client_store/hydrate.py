@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -15,6 +16,8 @@ from rocrate_tiled.metadata import CRATE_FILENAME
 _UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 def normalize_facility_base(url: str) -> str:
@@ -102,15 +105,27 @@ def hydrate_many(
     uuids: list[str],
     data_root: Path,
     timeout: float = 120.0,
+    on_progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     """Hydrate many UUIDs; returns per-uuid results."""
     data_root = data_root.resolve()
     data_root.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
+    total = len(uuids)
 
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        for uid in uuids:
+        for index, uid in enumerate(uuids, start=1):
+            if on_progress is not None:
+                on_progress(
+                    {
+                        "phase": "download",
+                        "current": index,
+                        "total": total,
+                        "uuid": str(uid),
+                        "message": f"Downloading {uid} from facility ({index}/{total})",
+                    }
+                )
             try:
                 results.append(
                     hydrate_one(
@@ -122,6 +137,16 @@ def hydrate_many(
                 )
             except Exception as exc:  # noqa: BLE001
                 errors.append({"uuid": str(uid), "error": str(exc)})
+                if on_progress is not None:
+                    on_progress(
+                        {
+                            "phase": "download_error",
+                            "current": index,
+                            "total": total,
+                            "uuid": str(uid),
+                            "message": str(exc),
+                        }
+                    )
 
     return {
         "ok": len(errors) == 0,

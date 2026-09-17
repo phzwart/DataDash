@@ -229,3 +229,36 @@ export function formFields(
     (f) => f.binding.user || f.source === "missing" || f.binding.required,
   );
 }
+
+/** True when a binding pulls values from crate metadata. */
+export function isCrateDependentBinding(binding: ParamBinding): boolean {
+  const fromSrc = binding.from;
+  if (fromSrc == null) return false;
+  const sources = Array.isArray(fromSrc) ? fromSrc : [fromSrc];
+  return sources.some(
+    (src) => typeof src === "string" && src.startsWith("crate."),
+  );
+}
+
+/**
+ * Parameters that are shared across a bulk run (not filled from crate metadata).
+ * Shown once next to the agent picker on the action queue.
+ */
+export function sharedParamBindings(
+  request: RequestSpec | null | undefined,
+): ParamBinding[] {
+  if (!request?.parameters?.length) return [];
+  return request.parameters.filter(
+    (b) => (b.user || b.required) && !isCrateDependentBinding(b),
+  );
+}
+
+/** Resolve shared bindings against defaults + user overrides (no crate). */
+export function resolveSharedFields(
+  request: RequestSpec | null | undefined,
+  userOverrides: Record<string, unknown> = {},
+): FieldResolution[] {
+  return sharedParamBindings(request).map((binding) =>
+    resolveBinding(binding, "", {}, userOverrides),
+  );
+}

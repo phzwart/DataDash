@@ -89,6 +89,7 @@ class AgentDefinition:
     skill_md: str
     agent_dir: Path
     request: RequestSpec | None = None
+    listed: bool = True
     raw: dict[str, Any] = field(default_factory=dict)
 
     def summary(self) -> dict[str, Any]:
@@ -97,6 +98,7 @@ class AgentDefinition:
             "name": self.name,
             "version": self.version,
             "description": self.description,
+            "listed": self.listed,
             "runner_type": self.runner.type,
             "input_items": [
                 {

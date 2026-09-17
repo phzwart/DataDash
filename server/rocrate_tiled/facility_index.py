@@ -12,6 +12,7 @@ from typing import Any, Iterator
 
 from rocrate_tiled.metadata import (
     CRATE_FILENAME,
+    RECORD_FILENAME,
     build_record_from_crate,
     discover_dataset_dirs,
     load_json,
@@ -95,16 +96,62 @@ def _crate_mtime(crate_dir: Path) -> float:
         return 0.0
 
 
+def _normalize_index_creation_date(raw: Any) -> str | None:
+    """Store searchable creation dates as ISO-8601 UTC (pad date-only values)."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    if len(text) == 10 and text[4] == "-" and text[7] == "-":
+        return f"{text}T00:00:00Z"
+    if text.endswith("+00:00"):
+        return text[:-6] + "Z"
+    return text
+
+
 def build_record_for_dir(crate_dir: Path) -> dict[str, Any]:
+    """Build a pin record from the RO-Crate (+ sidecar), then fill gaps from disk.
+
+    MyROCrates-style collections often keep search fields (technique_lambda,
+    instrument_code, source_path, …) on ``lambda_mx_record.json`` while the
+    RO-Crate graph is sparse. Prefer live crate+sidecar enrichment for quality
+    metrics; overlay any still-missing keys from the on-disk record.
+    """
     crate = load_json(crate_dir / CRATE_FILENAME)
     sidecar, sidecar_name = _load_sidecar(crate_dir)
-    return build_record_from_crate(
+    record = build_record_from_crate(
         crate,
         crate_dir_name=crate_dir.name,
         sidecar=sidecar,
         sidecar_filename=sidecar_name,
         crate_dir=crate_dir,
     )
+    disk_path = crate_dir / RECORD_FILENAME
+    if disk_path.is_file():
+        try:
+            disk = load_json(disk_path)
+        except (OSError, json.JSONDecodeError):
+            disk = None
+        if isinstance(disk, dict):
+            for key, value in disk.items():
+                if value is None or value == "":
+                    continue
+                if record.get(key) is None:
+                    record[key] = value
+                elif key == "creation_date":
+                    # Prefer a more precise timestamp when the crate only has a date.
+                    cur = str(record.get(key) or "")
+                    incoming = str(value)
+                    if len(incoming) > len(cur):
+                        record[key] = value
+    if "creation_date" in record:
+        normalized = _normalize_index_creation_date(record.get("creation_date"))
+        if normalized:
+            record["creation_date"] = normalized
+        else:
+            record.pop("creation_date", None)
+    return record
 
 
 @dataclass
@@ -325,11 +372,17 @@ class FacilityIndex:
             params.append(1 if is_public else 0)
 
         if creation_date_start:
-            clauses.append("(creation_date IS NOT NULL AND creation_date >= ?)")
+            # Compare calendar dates so date-only values (YYYY-MM-DD) match
+            # full ISO bounds from the dashboard (…T00:00:00Z / …T23:59:59Z).
+            clauses.append(
+                "(creation_date IS NOT NULL AND date(creation_date) >= date(?))"
+            )
             params.append(creation_date_start)
 
         if creation_date_end:
-            clauses.append("(creation_date IS NOT NULL AND creation_date <= ?)")
+            clauses.append(
+                "(creation_date IS NOT NULL AND date(creation_date) <= date(?))"
+            )
             params.append(creation_date_end)
 
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""

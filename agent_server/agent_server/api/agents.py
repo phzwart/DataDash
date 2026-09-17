@@ -12,7 +12,14 @@ router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 @router.get("")
 async def list_agents(request: Request) -> dict[str, Any]:
     registry = request.app.state.registry
+    include_hidden = str(request.query_params.get("all", "")).lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     agents = registry.list()
+    if not include_hidden:
+        agents = [a for a in agents if a.listed]
     return {
         "agents": [a.summary() for a in agents],
         "count": len(agents),

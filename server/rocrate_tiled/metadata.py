@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -106,10 +108,79 @@ def _field(node: dict[str, Any] | None, name: str) -> Any:
     if name in node and node[name] is not None:
         return node[name]
     bare = name.split(":", 1)[-1]
-    for key in (name, bare, f"lambda:{bare}", f"lambdax:{bare}"):
+    for key in (
+        name,
+        bare,
+        f"lambda:{bare}",
+        f"lambdax:{bare}",
+        f"lambdarc:{bare}",
+    ):
         if key in node and node[key] is not None:
             return node[key]
     return None
+
+
+def canonical_aa_sequence(raw: str) -> str | None:
+    """Normalize a protein sequence for SEGUID_v1 (IUPAC, uppercase, no whitespace)."""
+    text = str(raw).strip()
+    if not text:
+        return None
+    if text.startswith(">"):
+        lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip() and not line.startswith(">")
+        ]
+        text = "".join(lines)
+    compact = "".join(text.split()).upper()
+    return compact or None
+
+
+def compute_seguid_v1(sequence: str) -> str:
+    """Classic SEGUID (SHA-1 + Base64, no padding) advertised as SEGUID_v1."""
+    canon = canonical_aa_sequence(sequence)
+    if not canon:
+        raise ValueError("empty amino-acid sequence")
+    digest = hashlib.sha1(canon.encode("ascii")).digest()
+    return base64.b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _append_unique_seguid(found: list[str], seen: set[str], value: Any) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _append_unique_seguid(found, seen, item)
+        return
+    if value is None:
+        return
+    text = str(value).strip()
+    if not text or text in seen:
+        return
+    seen.add(text)
+    found.append(text)
+
+
+def collect_seguids_from_graph(graph: list[Any]) -> list[str]:
+    """SEGUID list for search: explicit crate values, else SEGUID_v1 from sequences."""
+    found: list[str] = []
+    seen: set[str] = set()
+    nodes = [n for n in graph if isinstance(n, dict)]
+    proteins = _nodes_by_type(nodes, "lambda:Protein") or _nodes_by_type(
+        nodes, "Protein"
+    )
+    sample = _first(nodes, "lambda:Sample")
+    for node in [*proteins, *([sample] if sample else [])]:
+        existing = _field(node, "seguid")
+        if existing is not None and existing != "":
+            _append_unique_seguid(found, seen, existing)
+            continue
+        seq = _field(node, "amino_acid_sequence")
+        if not seq:
+            continue
+        try:
+            _append_unique_seguid(found, seen, compute_seguid_v1(str(seq)))
+        except (UnicodeEncodeError, ValueError):
+            continue
+    return found
 
 
 def dataset_uuid_from_node(
@@ -363,6 +434,9 @@ def build_record_from_crate(
         "beamline": instrument_code,
         "modality": "x-ray_crystallography",
     }
+    seguids = collect_seguids_from_graph(graph)
+    if seguids:
+        record["seguid"] = seguids
 
     # Quality metrics from the crate (canonical pin summary).
     for key in (
@@ -464,6 +538,9 @@ def flatten_record_metadata(record: dict[str, Any]) -> dict[str, Any]:
     if isinstance(codes, list):
         metadata["experiment_codes"] = list(codes)
         metadata["experiment_codes_text"] = ",".join(str(c) for c in codes)
+    seguid = record.get("seguid")
+    if isinstance(seguid, list) and seguid:
+        metadata["seguid"] = [str(s) for s in seguid if s is not None]
     return metadata
 
 

@@ -36,11 +36,10 @@ fi
 "$VENV/bin/pip" install -U pip wheel -q
 "$VENV/bin/pip" install -r "$REQ"
 
-# Optional local agentsg checkout (not on PyPI).
+# Optional: replace the GitHub agentsg pin with a local regular (not editable) install.
 if [[ -n "${AGENTSG_ROOT:-}" && -f "$AGENTSG_ROOT/pyproject.toml" ]]; then
-  "$VENV/bin/pip" install -e "$AGENTSG_ROOT" -q
-elif [[ -n "${AGENTSG_SRC:-}" && -d "$AGENTSG_SRC" ]]; then
-  echo "AGENTSG_SRC=$AGENTSG_SRC (PYTHONPATH at runtime; not installed into venv)" >&2
+  echo "Reinstalling agentsg from local tree $AGENTSG_ROOT (non-editable)" >&2
+  "$VENV/bin/pip" install --force-reinstall "$AGENTSG_ROOT" -q
 fi
 
 echo "Agent venv ready: $VENV"

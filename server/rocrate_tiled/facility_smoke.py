@@ -69,10 +69,10 @@ def main() -> int:
         if status != 200:
             return 1
 
-    status, bad = _get(base, "/api/v1/search", {"seguid": "abc123"})
-    print(f"seguid rejection status={status}")
-    if status != 400:
-        print("expected 400 for seguid param", file=sys.stderr)
+    status, seguid_search = _get(base, "/api/v1/search", {"seguid": "abc123"})
+    print(f"seguid search status={status} count={seguid_search.get('count')}")
+    if status != 200:
+        print("expected 200 for seguid param", file=sys.stderr)
         return 1
 
     print("FACILITY_SMOKE_OK")

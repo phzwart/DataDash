@@ -97,6 +97,7 @@ slots:
     range: string
   sample_code:
     range: string
+    title: pin code
     description: Sample / pin code (e.g. EcCc1_MS).
   sample_id:
     range: string
@@ -135,23 +136,30 @@ slots:
     unit: percent
   space_group:
     range: string
+    title: SG
   unit_cell_a:
     range: float
+    title: a
     unit: angstrom
   unit_cell_b:
     range: float
+    title: b
     unit: angstrom
   unit_cell_c:
     range: float
+    title: c
     unit: angstrom
   unit_cell_alpha:
     range: float
+    title: α
     unit: degree
   unit_cell_beta:
     range: float
+    title: β
     unit: degree
   unit_cell_gamma:
     range: float
+    title: γ
     unit: degree
   indexing_confidence:
     range: float

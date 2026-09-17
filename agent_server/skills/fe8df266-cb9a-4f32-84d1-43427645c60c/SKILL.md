@@ -8,23 +8,32 @@ symmetry plate (general position + symmetry elements).
 
 ## Architecture
 
-Runs **in-process** against agentsg via `PYTHONPATH` (not HTTP).
+Runs **in-process** against a pip-installed agentsg (not HTTP, not PYTHONPATH).
 
 ## Python environment
 
-This agent ships its own virtualenv under `.venv/` (gitignored):
+This agent ships its own virtualenv under `.venv/` (gitignored).
+`setup-venv.sh` installs `requirements.txt`, including a regular pip install of
+**agentsg** from GitHub (not PYTHONPATH, not an editable checkout):
+
+```
+agentsg[plot] @ git+https://github.com/phzwart/agentsg.git
+```
 
 ```bash
 cd agent_server/skills/fe8df266-cb9a-4f32-84d1-43427645c60c
-AGENTSG_ROOT=/Users/phzwart/Projects/agentsg/agentsg ./setup-venv.sh
+rm -rf .venv
+./setup-venv.sh
 ```
+
+Override with a local tree only if you set `AGENTSG_ROOT` (still a regular
+`pip install`, not `-e`).
 
 `run` **requires** `.venv` and uses `.venv/bin/python` (not bare `python3`).
 Do not delete `requirements.txt` / `setup-venv.sh` when editing the agent —
-without them jobs fail with `ModuleNotFoundError: matplotlib`.
+without them jobs fail with `ModuleNotFoundError`.
 
-Override agentsg with `AGENTSG_ROOT` (editable install) or `AGENTSG_SRC` +
-`PYTHONPATH` in `agent.yaml`. No DuckDB or network needed.
+No DuckDB or network needed at job runtime.
 
 ## Required inputs
 

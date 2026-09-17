@@ -115,7 +115,7 @@ def load_config(
         ]
 
     default_local_roots = [
-        Path("/Users/phzwart/Projects/TMP_LAMBDA/data_root"),
+        Path("/nsls2/users/pzwart/Projects/MyROCrates"),
         root.parent / "client_store" / "data_root",
         root.parent / "data_root",
     ]

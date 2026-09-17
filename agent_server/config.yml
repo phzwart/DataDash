@@ -16,9 +16,9 @@ ingest:
   # Fallbacks after facility_url / options.crate_source_url (client_store hydrate API).
   crate_source_urls:
     - "http://127.0.0.1:8770"
-  # Prefer the canonical TMP_LAMBDA store (absolute File @ids + MTZ bytes).
+  # Prefer facility MyROCrates, then local client_store hydrate tree.
   local_crate_roots:
-    - "/Users/phzwart/Projects/TMP_LAMBDA/data_root"
+    - "/nsls2/users/pzwart/Projects/MyROCrates"
     - "../client_store/data_root"
 
 jobs:

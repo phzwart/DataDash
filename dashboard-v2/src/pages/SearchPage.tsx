@@ -9,7 +9,12 @@ import {
   type FacilitySearchHit,
   type FacilitySearchParams,
 } from "../lib/facilityApi";
-import { getHydrateUrl, storeCratesToLocalTiled } from "../lib/hydrateApi";
+import StoreProgressBar from "../components/StoreProgressBar";
+import {
+  getHydrateUrl,
+  storeCratesToLocalTiled,
+  type HydrateProgress,
+} from "../lib/hydrateApi";
 import { fetchAllCrates } from "../lib/tiledCrates";
 
 /** LAMBDA Facility Search technique vocabulary. */
@@ -56,24 +61,22 @@ const presetButton =
 
 type DatePreset = "week" | "month" | "year";
 
-function formatLocalDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function formatUtcDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
+/** Date presets use UTC calendar days (facility timestamps are UTC). */
 function dateRangeForPreset(preset: DatePreset): { start: string; end: string } {
   const end = new Date();
-  const start = new Date(end);
+  const start = new Date(end.getTime());
   if (preset === "week") {
-    start.setDate(end.getDate() - 7);
+    start.setUTCDate(end.getUTCDate() - 7);
   } else if (preset === "month") {
-    start.setMonth(end.getMonth() - 1);
+    start.setUTCMonth(end.getUTCMonth() - 1);
   } else {
-    start.setFullYear(end.getFullYear() - 1);
+    start.setUTCFullYear(end.getUTCFullYear() - 1);
   }
-  return { start: formatLocalDate(start), end: formatLocalDate(end) };
+  return { start: formatUtcDate(start), end: formatUtcDate(end) };
 }
 
 function formatMeasuredDate(raw?: string | null): string {
@@ -118,6 +121,7 @@ function Category({
 export default function SearchPage() {
   const queryClient = useQueryClient();
   const [proteinName, setProteinName] = useState("");
+  const [seguid, setSeguid] = useState("");
   const [technique, setTechnique] = useState("MX");
   const [facility, setFacility] = useState("");
   const [instrument, setInstrument] = useState("");
@@ -127,6 +131,9 @@ export default function SearchPage() {
   const [submitted, setSubmitted] = useState<FacilitySearchParams | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [storeMessage, setStoreMessage] = useState<string | null>(null);
+  const [storeProgress, setStoreProgress] = useState<HydrateProgress | null>(
+    null,
+  );
 
   const localCratesQuery = useQuery({
     queryKey: ["crates"],
@@ -160,20 +167,37 @@ export default function SearchPage() {
   }
 
   const storeMutation = useMutation({
-    mutationFn: async (ids: string[]) => storeCratesToLocalTiled(ids),
+    mutationFn: async (ids: string[]) => {
+      setStoreProgress({
+        phase: "start",
+        current: 0,
+        total: ids.length,
+        message: `Starting store of ${ids.length} experiment(s)`,
+      });
+      return storeCratesToLocalTiled(ids, {
+        onProgress: (p) => setStoreProgress({ ...p }),
+      });
+    },
     onSuccess: (result, ids) => {
       const n = result.count ?? result.hydrated?.length ?? ids.length;
       const errs = result.error_count ?? result.errors?.length ?? 0;
+      const reg = result.tiled_registry;
+      const regNote = reg
+        ? ` · tiled +${reg.registered ?? 0}/~${reg.updated ?? 0}/skip ${reg.skipped ?? 0}`
+        : "";
       setStoreMessage(
         errs > 0
-          ? `Stored ${n} of ${ids.length} experiment(s) on the local Tiled server with ${errs} error(s). Check client_store logs.`
-          : `Stored ${n} experiment(s) on the local Tiled server. Open Data Overview or Plots.`,
+          ? `Stored ${n} of ${ids.length} experiment(s) on the local Tiled server with ${errs} error(s)${regNote}.`
+          : `Stored ${n} experiment(s) on the local Tiled server${regNote}. Open Data Overview or Plots.`,
       );
       setSelected(new Set());
       void queryClient.invalidateQueries({ queryKey: ["crates"] });
     },
     onError: (err) => {
       setStoreMessage(err instanceof Error ? err.message : String(err));
+    },
+    onSettled: () => {
+      // Keep the last progress snapshot briefly; clear after a short delay via message.
     },
   });
 
@@ -186,6 +210,7 @@ export default function SearchPage() {
   function buildParams(): FacilitySearchParams {
     return {
       protein_name: proteinName.trim() || undefined,
+      seguid: seguid.trim() || undefined,
       technique: technique || undefined,
       facility: facility || undefined,
       instrument: instrument.trim() || undefined,
@@ -206,6 +231,7 @@ export default function SearchPage() {
 
   function onClearFilters() {
     setProteinName("");
+    setSeguid("");
     setTechnique("");
     setFacility("");
     setInstrument("");
@@ -220,6 +246,7 @@ export default function SearchPage() {
   function onListAll() {
     // Clear form filters so List all is unambiguous, then query with no params.
     setProteinName("");
+    setSeguid("");
     setTechnique("");
     setFacility("");
     setInstrument("");
@@ -267,7 +294,7 @@ export default function SearchPage() {
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <div className="grid gap-4 lg:grid-cols-2">
             <Category title="Sample" description="Protein / sample identity">
-              <label className="flex flex-col gap-1.5 sm:col-span-2">
+              <label className="flex flex-col gap-1.5">
                 <span className={fieldLabel}>Protein name</span>
                 <input
                   value={proteinName}
@@ -275,6 +302,17 @@ export default function SearchPage() {
                   className={fieldControl}
                   placeholder="e.g. EcCa, lysozyme"
                   autoComplete="off"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className={fieldLabel}>SEGUID</span>
+                <input
+                  value={seguid}
+                  onChange={(e) => setSeguid(e.target.value)}
+                  className={fieldControl}
+                  placeholder="comma-separated; experiment must have all"
+                  autoComplete="off"
+                  spellCheck={false}
                 />
               </label>
             </Category>
@@ -331,7 +369,7 @@ export default function SearchPage() {
 
             <Category
               title="Access & dates"
-              description="Visibility and creation window"
+              description="Visibility and creation window (UTC calendar days)"
             >
               <label className="flex flex-col gap-1.5 sm:col-span-2">
                 <span className={fieldLabel}>Visibility</span>
@@ -422,7 +460,13 @@ export default function SearchPage() {
         </form>
       </Paper>
 
-      {storeMessage && (
+      {(storeMutation.isPending || storeProgress) && (
+        <StoreProgressBar
+          progress={storeProgress}
+          pending={storeMutation.isPending}
+        />
+      )}
+      {storeMessage && !storeMutation.isPending && (
         <p
           className={`text-sm font-medium ${
             storeMutation.isError ? "text-rose-300" : "text-emerald-300"
@@ -516,6 +560,11 @@ export default function SearchPage() {
                             stored locally
                           </span>
                         )}
+                        {hit.seguid && hit.seguid.length > 0 && (
+                          <div className="mt-0.5 font-mono text-[11px] font-normal text-slate-500">
+                            {hit.seguid.join(", ")}
+                          </div>
+                        )}
                       </td>
                       <td className="p-2.5 align-middle text-slate-700">
                         {hit.technique ?? "—"}
@@ -555,13 +604,15 @@ export default function SearchPage() {
               disabled={selected.size === 0 || storeMutation.isPending}
               onClick={() => {
                 setStoreMessage(null);
+                setStoreProgress(null);
                 storeMutation.mutate([...selected]);
               }}
               className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-6 py-3 text-base font-semibold text-white shadow-md hover:bg-emerald-500 disabled:opacity-40 sm:w-auto sm:min-w-[20rem]"
             >
               <CloudArrowDown size={22} weight="bold" />
               {storeMutation.isPending
-                ? "Storing on local Tiled server…"
+                ? storeProgress?.message ||
+                  "Storing on local Tiled server…"
                 : selected.size > 0
                   ? `Store ${selected.size} selected to local Tiled server`
                   : "Store selection to local Tiled server"}

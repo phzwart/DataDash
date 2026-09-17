@@ -29,7 +29,6 @@ fi
 mkdir -p "$OUTPUT_DIR/data" "$WORKSPACE/work"
 
 AGENT_DIR="$(cd "$(dirname "$0")" && pwd)"
-export PYTHONPATH="${PYTHONPATH:-/Users/phzwart/Projects/agentsg/agentsg/src}"
 
 # shellcheck source=../_lib/resolve_python.sh
 source "$AGENT_DIR/../_lib/resolve_python.sh"

@@ -128,6 +128,8 @@ export type AgentSummary = {
   name: string;
   version: string;
   description: string;
+  /** When false, agent is for tests/internal use and omitted from Actions UI. */
+  listed?: boolean;
   runner_type?: string;
   input_items?: AgentInputItem[];
   output?: {
@@ -147,7 +149,14 @@ export async function listAgents(
     throw new Error(`List agents failed (${res.status})`);
   }
   const body = (await res.json()) as { agents?: AgentSummary[] };
-  return Array.isArray(body.agents) ? body.agents : [];
+  const agents = Array.isArray(body.agents) ? body.agents : [];
+  // Hide smoke-test / unlisted agents even if an older agent_server omits `listed`.
+  return agents.filter(
+    (a) =>
+      a.listed !== false &&
+      a.name !== "level-zero-agent" &&
+      a.agent_uuid !== "550e8400-e29b-41d4-a716-446655440000",
+  );
 }
 
 export async function getAgent(
@@ -225,11 +234,17 @@ export async function waitForJob(
   const baseUrl = options?.baseUrl ?? getAgentUrl();
   const intervalMs = options?.intervalMs ?? 500;
   const timeoutMs = options?.timeoutMs ?? 120_000;
+  const terminal = new Set([
+    "completed",
+    "failed",
+    "cancelled",
+    "timed_out",
+  ]);
   const started = Date.now();
   for (;;) {
     const job = await getJob(jobUuid, baseUrl);
     options?.onUpdate?.(job);
-    if (job.is_terminal) return job;
+    if (job.is_terminal || terminal.has(String(job.status))) return job;
     if (Date.now() - started > timeoutMs) {
       throw new Error(
         `Timed out waiting for job ${jobUuid} (last status: ${job.status})`,

@@ -7,26 +7,29 @@ so RO-Crate-listed files can be fetched via the Tiled API.
 
 ```text
 DATA_ROOT/
+├── schemas/                        # dashboard / LinkML YAML (served at /schemas/)
 └── {dataset-uuid}/
     ├── ro-crate-metadata.json
-    ├── *_sidecar.json              # optional (crate root or under data/)
-    └── data/                       # full experiment files referenced by the crate
-        ├── logs/
-        ├── processed/
-        └── ...
+    ├── lambda_mx_record.json
+    ├── *_ap_01_sidecar.json        # DataDash metrics sidecar (optional for RO-Crate)
+    └── data/                       # optional local copies; often omitted
 ```
 
-RO-Crate `File` node `@id` values (e.g. `logs/ap_01.log`) resolve to
-`{uuid}/data/{path}` first, then `{uuid}/{path}`.
+RO-Crate `File` `@id` values may be **absolute** paths under beamline storage
+(e.g. `/nsls2/data4/fmx/...`). Those roots must be listed in
+`config.yml` → `readable_storage`. Relative ids resolve to `{uuid}/data/{path}`
+then `{uuid}/{path}`.
+
+Canonical local collection: `~/Projects/MyROCrates` (default in `serve.sh`).
 
 ## Setup
 
 ```bash
 cd server
-python -m venv .venv && source .venv/bin/activate
+# Prefer an NSLS-II collection Python (≥3.10) when creating the venv:
+/nsls2/conda/envs/2025-3.0-py312-tiled/bin/python -m venv .venv
+source .venv/bin/activate
 pip install -e .
-export TILED_API_KEY=secret
-export DATA_ROOT=/absolute/path/to/data_root
 mkdir -p var
 ```
 
@@ -34,13 +37,21 @@ mkdir -p var
 
 On startup the server:
 
-1. Builds `DATA_ROOT/facility_index.db` for `GET /api/v1/search`
+1. Builds the facility SQLite index (`FACILITY_DB`, default `server/var/facility_index.db`)
 2. Registers each dataset in Tiled at `/crates/{uuid}/` with RO-Crate files as
    external bytes under `/crates/{uuid}/assets/`
+3. Serves `DATA_ROOT/schemas/` at `/schemas/` (auto-links from `client_store` if missing)
 
 ```bash
-./serve.sh
+./serve.sh                  # :8767, DATA_ROOT=~/Projects/MyROCrates
+# or
+DATA_ROOT=/path/to/crates ./serve.sh --port 8767
 ```
+
+Client guides:
+
+- Search API: [`../docs/facility_search_api.md`](../docs/facility_search_api.md)
+- Full facility server: [`../docs/facility_server.md`](../docs/facility_server.md)
 
 ## Core HTTP API (this is the product)
 
@@ -59,6 +70,7 @@ No web UI required. Any HTTP client can:
 
 | Param | Matching |
 |-------|----------|
+| `seguid` | experiment has all comma-separated values |
 | `protein_name` | case-insensitive substring |
 | `technique` | LAMBDA vocab (`MX`, `cryo-EM`, …) |
 | `facility` | exact (`NSLS-II`, …) |

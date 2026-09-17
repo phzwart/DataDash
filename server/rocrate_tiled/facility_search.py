@@ -158,11 +158,32 @@ class SearchParams:
     creation_date_end: datetime | None = None
 
 
-def parse_search_params(query: dict[str, str]) -> SearchParams:
-    if "seguid" in query:
+def parse_seguid_param(raw: str) -> list[str]:
+    """LAMBDA v0.1.1: comma-separated SEGUIDs; whitespace around values is ignored."""
+    parts = [segment.strip() for segment in raw.split(",")]
+    segs = [segment for segment in parts if segment]
+    if not segs:
         raise FacilitySearchError(
-            "SEGUID search is not supported for macromolecular crystallography datasets"
+            "seguid must contain at least one non-empty value"
         )
+    return segs
+
+
+def record_seguids(record: dict[str, Any]) -> list[str]:
+    raw = record.get("seguid")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if item is not None and str(item).strip()]
+    return []
+
+
+def parse_search_params(query: dict[str, str]) -> SearchParams:
+    seguid = None
+    if "seguid" in query:
+        seguid = parse_seguid_param(str(query.get("seguid") or ""))
 
     technique = None
     if "technique" in query:
@@ -197,6 +218,7 @@ def parse_search_params(query: dict[str, str]) -> SearchParams:
         )
 
     return SearchParams(
+        seguid=seguid,
         protein_name=query.get("protein_name") or None,
         technique=technique,
         facility=query.get("facility") or None,
@@ -239,9 +261,9 @@ def record_to_search_result(
     size = record.get("size_bytes")
     if isinstance(size, int) and size >= 0:
         result["size"] = size
-    seguid = record.get("seguid")
-    if isinstance(seguid, list) and seguid:
-        result["seguid"] = [str(s) for s in seguid if s is not None]
+    seguid = record_seguids(record)
+    if seguid:
+        result["seguid"] = seguid
     pi = record.get("PI")
     if isinstance(pi, dict) and pi:
         result["PI"] = pi
@@ -270,6 +292,14 @@ def search_records(
         creation_date_start=creation_start,
         creation_date_end=creation_end,
     )
+    # LAMBDA: seguid=seg1,seg2 means the experiment has all of these SEGUIDs.
+    if params.seguid:
+        wanted = params.seguid
+        records = [
+            record
+            for record in records
+            if set(wanted).issubset(set(record_seguids(record)))
+        ]
     results = [
         record_to_search_result(r, facility_endpoint=facility_endpoint)
         for r in records
@@ -284,6 +314,7 @@ def health_payload(index: FacilityIndex) -> dict[str, Any]:
         "status": status,
         "facility": facility_id(),
         "api_version": api_version(),
+        "seguid_algorithm": "SEGUID_v1",
         "details": {
             "database": details,
         },

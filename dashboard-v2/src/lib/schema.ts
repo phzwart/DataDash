@@ -11,6 +11,7 @@ import { getTiledOrigin, resolveAgainstTiledOrigin } from "./tiledServer";
 
 export type LinkmlSlot = {
   range?: string;
+  title?: string;
   description?: string;
   multivalued?: boolean;
   identifier?: boolean;
@@ -1219,7 +1220,9 @@ export async function fetchLinkmlSchema(
 
 export function slotLabel(schema: ParsedSchema, slotName: string): string {
   const slot = schema.slots[slotName];
-  if (slot?.description) return slot.description;
+  if (typeof slot?.title === "string" && slot.title.trim()) {
+    return slot.title.trim();
+  }
   return humanize(slotName);
 }
 

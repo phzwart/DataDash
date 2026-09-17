@@ -98,6 +98,17 @@ function CollapsiblePlot({
   );
 }
 
+function formatUnitCellValue(raw: unknown): string {
+  const num =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string" && raw.trim() !== ""
+        ? Number(raw)
+        : NaN;
+  if (!Number.isFinite(num)) return raw == null || raw === "" ? "—" : String(raw);
+  return num.toFixed(2);
+}
+
 function MetadataTable({
   crates,
   columns,
@@ -134,26 +145,26 @@ function MetadataTable({
   }, []);
 
   return (
-    <div className="min-w-0 w-full h-full flex flex-col">
+    <div className="min-w-0 w-full h-full flex flex-col min-h-0">
       {title ? (
         <h3 className="text-sm font-medium text-slate-200 mb-2 shrink-0">
           {title}
         </h3>
       ) : null}
-      <div className="overflow-auto rounded-md border border-slate-700/80 max-h-[min(420px,55vh)]">
-        <table className="w-full text-left text-xs border-collapse">
-          <thead className="sticky top-0 bg-slate-900 text-slate-400 uppercase tracking-wide">
+      <div className="flex-1 min-h-0 overflow-auto rounded-md border border-slate-700/80">
+        <table className="w-full text-left text-xs border-separate border-spacing-0">
+          <thead className="text-slate-400 uppercase tracking-wide">
             <tr>
-              <th className="px-2 py-1.5 font-medium whitespace-nowrap border-b border-slate-700">
+              <th className="sticky top-0 z-20 px-2 py-1.5 font-medium whitespace-nowrap border-b border-slate-700 bg-slate-900 shadow-[0_1px_0_0_rgb(51,65,85)]">
                 ★
               </th>
-              <th className="px-2 py-1.5 font-medium whitespace-nowrap border-b border-slate-700">
+              <th className="sticky top-0 z-20 px-2 py-1.5 font-medium whitespace-nowrap border-b border-slate-700 bg-slate-900 shadow-[0_1px_0_0_rgb(51,65,85)]">
                 Tag
               </th>
               {columns.map((col) => (
                 <th
                   key={col}
-                  className="px-2 py-1.5 font-medium whitespace-nowrap border-b border-slate-700"
+                  className="sticky top-0 z-20 px-2 py-1.5 font-medium whitespace-nowrap border-b border-slate-700 bg-slate-900 shadow-[0_1px_0_0_rgb(51,65,85)]"
                 >
                   {schema ? slotLabel(schema, col) : col.replace(/_/g, " ")}
                 </th>
@@ -170,8 +181,8 @@ function MetadataTable({
                   key={c.id}
                   className={
                     active
-                      ? "bg-sky-900/40 text-sky-100"
-                      : "text-slate-200 odd:bg-slate-900/40"
+                      ? "bg-sky-950 text-sky-100"
+                      : "text-slate-200 odd:bg-slate-950/90"
                   }
                 >
                   <td className="px-2 py-1 whitespace-nowrap border-b border-slate-800/80">
@@ -208,22 +219,13 @@ function MetadataTable({
                   </td>
                   {columns.map((col) => {
                     const raw = c.metadata[col];
-                    const display =
-                      schema != null
-                        ? enumDisplay(schema, col, raw)
+                    const text = col.startsWith("unit_cell_")
+                      ? formatUnitCellValue(raw)
+                      : schema != null
+                        ? enumDisplay(schema, col, raw) || "—"
                         : raw == null
                           ? "—"
                           : String(raw);
-                    const num =
-                      typeof raw === "number"
-                        ? raw
-                        : typeof raw === "string" && raw.trim() !== ""
-                          ? Number(raw)
-                          : NaN;
-                    const text =
-                      Number.isFinite(num) && col.startsWith("unit_cell_")
-                        ? num.toFixed(3)
-                        : display || "—";
                     return (
                       <td
                         key={col}
@@ -280,7 +282,13 @@ function PlotRows({
               return (
                 <div
                   key={key}
-                  className="min-w-0 shrink-0"
+                  className={
+                    panel.type === "table"
+                      ? // Height comes from sibling plots (items-stretch); absolute
+                        // fill keeps table content from expanding the row.
+                        "relative min-w-0 shrink-0 self-stretch min-h-0"
+                      : "min-w-0 shrink-0"
+                  }
                   style={{
                     flex: `1 1 ${layout.widthFraction * 100}%`,
                     width: `${layout.widthFraction * 100}%`,
@@ -288,12 +296,14 @@ function PlotRows({
                   }}
                 >
                   {panel.type === "table" ? (
-                    <MetadataTable
-                      crates={crates}
-                      columns={panel.columns}
-                      schema={schema}
-                      title={panel.title}
-                    />
+                    <div className="absolute inset-0 flex flex-col min-h-0">
+                      <MetadataTable
+                        crates={crates}
+                        columns={panel.columns}
+                        schema={schema}
+                        title={panel.title}
+                      />
+                    </div>
                   ) : panel.type === "vega" ? (
                     <div className="min-w-0">
                       {panel.title ? (
@@ -364,6 +374,7 @@ export default function PlotsPage() {
   const [markerFilters, setMarkerFilters] = useState<MarkerFilters>({
     minStars: 0,
     colorTag: "any",
+    processedData: "any",
     sort: "default",
   });
   const [, markerBump] = useState(0);

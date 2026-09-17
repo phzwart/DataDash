@@ -270,6 +270,44 @@ export function subscribeCrateMarkers(listener: () => void): () => void {
 
 export type MarkerSortMode = "default" | "stars" | "color";
 
+/** Filter on whether the crate has auto-processed quality metrics. */
+export type ProcessedDataFilter = "any" | "yes" | "no";
+
+/**
+ * True when the pin record carries final-processing quality fields.
+ * Stub sidecars alone do not count — look for resolution / unit cell / SG.
+ */
+export function crateHasProcessedData(
+  metadata: Record<string, unknown> | undefined | null,
+): boolean {
+  if (!metadata) return false;
+  const res = metadata.resolution;
+  if (typeof res === "number" && Number.isFinite(res)) return true;
+  if (
+    typeof res === "string" &&
+    res.trim() !== "" &&
+    Number.isFinite(Number(res))
+  ) {
+    return true;
+  }
+  const a = metadata.unit_cell_a;
+  const hasCell =
+    (typeof a === "number" && Number.isFinite(a)) ||
+    (typeof a === "string" &&
+      a.trim() !== "" &&
+      Number.isFinite(Number(a)));
+  const sg = metadata.space_group;
+  const hasSg = typeof sg === "string" && sg.trim() !== "";
+  return hasCell && hasSg;
+}
+
+function rowMetadata(row: {
+  metadata?: Record<string, unknown>;
+  crate?: { metadata?: Record<string, unknown> };
+}): Record<string, unknown> {
+  return row.metadata ?? row.crate?.metadata ?? {};
+}
+
 export function compareCratesByMarkers(
   aId: string,
   bId: string,
@@ -289,22 +327,40 @@ export function compareCratesByMarkers(
   return b.stars - a.stars;
 }
 
-export function filterCratesByMarkers<T extends { id: string }>(
+export function filterCratesByMarkers<
+  T extends {
+    id: string;
+    metadata?: Record<string, unknown>;
+    crate?: { metadata?: Record<string, unknown> };
+  },
+>(
   crates: T[],
   filters: {
     minStars?: CrateStarRating;
     colorTag?: CrateColorTagFilter;
+    processedData?: ProcessedDataFilter;
   },
   store: CrateMarkerStore = getCrateMarkerStore(),
 ): T[] {
   const minStars = filters.minStars ?? 0;
   const colorTag = filters.colorTag ?? "any";
+  const processedData = filters.processedData ?? "any";
   return crates.filter((c) => {
     const m = store[c.id] ?? EMPTY_MARKER;
     if (m.stars < minStars) return false;
-    if (colorTag === "any") return true;
-    if (colorTag === "none") return m.colors.length === 0;
-    return m.colors.includes(colorTag);
+    if (colorTag !== "any") {
+      if (colorTag === "none") {
+        if (m.colors.length !== 0) return false;
+      } else if (!m.colors.includes(colorTag)) {
+        return false;
+      }
+    }
+    if (processedData !== "any") {
+      const has = crateHasProcessedData(rowMetadata(c));
+      if (processedData === "yes" && !has) return false;
+      if (processedData === "no" && has) return false;
+    }
+    return true;
   });
 }
 

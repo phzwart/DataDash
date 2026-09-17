@@ -4,6 +4,7 @@
 - `lambda_mx_dashboard.yaml` — Finch UI layout + plots (+ optional `crate.actions` tab)
 - `lambda_mx_display_modules.yaml` — **reference spec** for agent result display modules
 - `lambda_mx_collection.yaml` — optional working-set filters
+- `lambda_mx_sidecar.md` — **DataDash application** processing-sidecar outline (not an RO-Crate profile must)
 
 ## Agent result display modules
 

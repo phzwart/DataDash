@@ -65,6 +65,7 @@ export function clearStoredFacilityUrl(): void {
 }
 
 export type FacilitySearchParams = {
+  seguid?: string;
   protein_name?: string;
   technique?: string;
   facility?: string;

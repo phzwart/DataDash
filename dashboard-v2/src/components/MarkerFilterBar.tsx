@@ -6,11 +6,13 @@ import {
   type CrateColorTagFilter,
   type CrateStarRating,
   type MarkerSortMode,
+  type ProcessedDataFilter,
 } from "../lib/crateMarkers";
 
 export type MarkerFilters = {
   minStars: CrateStarRating;
   colorTag: CrateColorTagFilter;
+  processedData: ProcessedDataFilter;
   sort: MarkerSortMode;
 };
 
@@ -82,6 +84,24 @@ export default function MarkerFilterBar({
               {opt.label}
             </option>
           ))}
+        </select>
+      </label>
+
+      <label className="inline-flex items-center gap-1.5 text-slate-400">
+        Processed data
+        <select
+          value={filters.processedData}
+          onChange={(e) =>
+            onChange({
+              ...filters,
+              processedData: e.target.value as ProcessedDataFilter,
+            })
+          }
+          className="rounded border border-slate-600 bg-slate-800 px-2 py-1 text-slate-100"
+        >
+          <option value="any">Any</option>
+          <option value="yes">Has processed data</option>
+          <option value="no">Has no processed data</option>
         </select>
       </label>
 

@@ -2,6 +2,8 @@ agent_uuid: "550e8400-e29b-41d4-a716-446655440000"
 name: level-zero-agent
 version: "0.1.0"
 description: "Minimal pass-through agent for pipeline smoke tests"
+# Keep registered for tests / direct UUID submit; hide from Actions UI.
+listed: false
 
 runner:
   type: shell

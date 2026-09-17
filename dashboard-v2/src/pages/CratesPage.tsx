@@ -34,6 +34,7 @@ export default function CratesPage() {
   const [markerFilters, setMarkerFilters] = useState<MarkerFilters>({
     minStars: 0,
     colorTag: "any",
+    processedData: "any",
     sort: "default",
   });
   const [, markerBump] = useState(0);

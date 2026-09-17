@@ -25,4 +25,7 @@ trees:
       uri: "sqlite+aiosqlite:///./var/catalog.db"
       readable_storage:
         - ${DATA_ROOT}
+        # Hydrated crates keep absolute File @ids under beamline storage
+        - /nsls2/data4/fmx
+        - /nsls2/data4/amx
       init_if_not_exists: true

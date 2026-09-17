@@ -11,7 +11,13 @@ from fastapi.testclient import TestClient
 
 from rocrate_tiled.app import create_app
 from rocrate_tiled.facility_index import FacilityIndex, index_data_root
-from rocrate_tiled.facility_search import FacilitySearchError, parse_search_params, search_records
+from rocrate_tiled.facility_search import (
+    FacilitySearchError,
+    parse_search_params,
+    parse_seguid_param,
+    search_records,
+)
+from rocrate_tiled.metadata import compute_seguid_v1
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data_root"
 
@@ -108,11 +114,20 @@ def test_search_invalid_date(client: TestClient) -> None:
     assert body["code"] == 400
 
 
-def test_search_seguid_rejected(client: TestClient) -> None:
+def test_search_seguid_unknown_is_empty(client: TestClient) -> None:
     resp = client.get("/api/v1/search", params={"seguid": "abc123"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["results"] == []
+    assert payload["count"] == 0
+
+
+def test_search_seguid_empty_param_is_400(client: TestClient) -> None:
+    resp = client.get("/api/v1/search", params={"seguid": " , "})
     assert resp.status_code == 400
     body = resp.json()
-    assert "SEGUID" in body["message"]
+    assert body["code"] == 400
+    assert "seguid" in body["message"].lower()
 
 
 def test_search_empty_result(client: TestClient) -> None:
@@ -133,6 +148,7 @@ def test_health(client: TestClient) -> None:
     assert body["status"] in {"healthy", "degraded"}
     assert body["facility"]
     assert body["api_version"] == "0.1.1"
+    assert body["seguid_algorithm"] == "SEGUID_v1"
     assert "database" in body["details"]
 
 
@@ -191,9 +207,87 @@ def test_invalid_uuid_rejected(client: TestClient) -> None:
     assert resp.status_code in {400, 404}
 
 
-def test_parse_search_params_rejects_seguid() -> None:
+def test_parse_search_params_accepts_seguid() -> None:
+    params = parse_search_params({"seguid": "abc123def456, 789ghi012jkl"})
+    assert params.seguid == ["abc123def456", "789ghi012jkl"]
+
+
+def test_parse_seguid_param_rejects_empty() -> None:
     with pytest.raises(FacilitySearchError):
-        parse_search_params({"seguid": "abc"})
+        parse_seguid_param(" , ")
+
+
+def test_compute_seguid_v1_classic() -> None:
+    # SEGUID_v1 = SHA-1 + Base64, no padding, uppercase sequence.
+    assert compute_seguid_v1("acde") == compute_seguid_v1("ACDE")
+    expected = __import__("base64").b64encode(
+        __import__("hashlib").sha1(b"ACDE").digest()
+    ).decode("ascii").rstrip("=")
+    assert compute_seguid_v1("ACDE") == expected
+
+
+def test_search_seguid_and_match(tmp_path: Path) -> None:
+    uuid = "550e8400-e29b-41d4-a716-446655440099"
+    seq_a = "ACDEFGHIKLMNPQRSTVWY"
+    seq_b = "MVNREIVMDYILSCLQDLVENGVEIKPDSDLVNDLGLESI"
+    crate = {
+        "@context": ["https://w3id.org/ro/crate/1.2/context"],
+        "@graph": [
+            {"@id": "ro-crate-metadata.json", "@type": "CreativeWork"},
+            {
+                "@id": "./",
+                "@type": ["Dataset", "lambda:Dataset"],
+                "identifier": [
+                    {
+                        "@type": "PropertyValue",
+                        "propertyID": "UUID",
+                        "value": uuid,
+                    }
+                ],
+                "lambda:facility": "NSLS-II",
+            },
+            {
+                "@id": "#protein-a",
+                "@type": ["Protein", "lambda:Protein"],
+                "lambda:amino_acid_sequence": seq_a,
+            },
+            {
+                "@id": "#protein-b",
+                "@type": ["Protein", "lambda:Protein"],
+                "lambda:amino_acid_sequence": seq_b,
+            },
+        ],
+    }
+    crate_dir = tmp_path / uuid
+    crate_dir.mkdir()
+    (crate_dir / "ro-crate-metadata.json").write_text(
+        json.dumps(crate), encoding="utf-8"
+    )
+    db_path = tmp_path / "facility_index.db"
+    index_data_root(tmp_path, db_path, force=True)
+    app = create_app(data_root=tmp_path, db_path=db_path, use_tiled=False)
+    seg_a = compute_seguid_v1(seq_a)
+    seg_b = compute_seguid_v1(seq_b)
+    with TestClient(app) as client:
+        one = client.get("/api/v1/search", params={"seguid": seg_a})
+        assert one.status_code == 200
+        assert one.json()["count"] == 1
+        assert one.json()["results"][0]["experiment_id"] == uuid
+        assert one.json()["results"][0]["seguid"] == [seg_a, seg_b]
+
+        both = client.get(
+            "/api/v1/search",
+            params={"seguid": f"{seg_a}, {seg_b}"},
+        )
+        assert both.status_code == 200
+        assert both.json()["count"] == 1
+
+        missing = client.get(
+            "/api/v1/search",
+            params={"seguid": f"{seg_a},does-not-exist"},
+        )
+        assert missing.status_code == 200
+        assert missing.json()["count"] == 0
 
 
 def test_search_records_unit(tmp_path: Path) -> None:

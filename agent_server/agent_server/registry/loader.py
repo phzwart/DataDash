@@ -114,6 +114,7 @@ def _parse_agent_yaml(path: Path, agent_dir: Path) -> AgentDefinition:
         request=_parse_request(request_raw if isinstance(request_raw, dict) else None),
         skill_md=skill_md,
         agent_dir=agent_dir.resolve(),
+        listed=bool(raw.get("listed", True)),
         raw=raw,
     )
 

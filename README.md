@@ -38,6 +38,11 @@ cd ../dashboard-v2 && npm install && npm run dev
 
 Open http://127.0.0.1:5175 — Search → cart → Pull → Overview / Plots.
 
+How to query the running facility server:
+
+- Search API: [`docs/facility_search_api.md`](docs/facility_search_api.md)
+- Crates, sidecars, Tiled: [`docs/facility_server.md`](docs/facility_server.md)
+
 See [`dashboard-v2/README.md`](dashboard-v2/README.md) and [`client_store/README.md`](client_store/README.md).
 
 ## Legacy dashboard

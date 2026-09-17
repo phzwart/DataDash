@@ -1,7 +1,7 @@
 # LAMBDA facility server on Tiled.
 #
 #   export TILED_API_KEY=secret
-#   export DATA_ROOT=/absolute/path/to/data_root
+#   export DATA_ROOT=/absolute/path/to/MyROCrates
 #   ./serve.sh
 #
 # On startup the server:
@@ -11,6 +11,9 @@
 # Tiled tree:
 #   /crates/{uuid}                 metadata container
 #   /crates/{uuid}/assets/{key}    external bytes for each RO-Crate File node
+#
+# MyROCrates list processing products via absolute File @ids under beamline
+# storage. Those roots must appear in readable_storage (do not copy payloads).
 
 authentication:
   single_user_api_key: ${TILED_API_KEY}
@@ -32,4 +35,7 @@ trees:
       uri: "sqlite+aiosqlite:///./var/catalog.db"
       readable_storage:
         - ${DATA_ROOT}
+        # Absolute RO-Crate File @ids (FMX / AMX proposal trees)
+        - /nsls2/data4/fmx
+        - /nsls2/data4/amx
       init_if_not_exists: true

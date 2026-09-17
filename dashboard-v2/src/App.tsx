@@ -20,7 +20,6 @@ import SearchPage from "./pages/SearchPage";
 import CartPage from "./pages/CartPage";
 import SelectionPage from "./pages/SelectionPage";
 import ExportPage from "./pages/ExportPage";
-import ActionsPage from "./pages/ActionsPage";
 import NotesPage from "./pages/NotesPage";
 import DensityPage from "./pages/DensityPage";
 import NotesWindowLauncher from "./components/NotesWindowLauncher";
@@ -70,12 +69,6 @@ const navRoutes: RouteItem[] = [
         path: "cart",
         label: "Action queue",
         element: <CartPage />,
-        isBackgroundTransparent: true,
-      },
-      {
-        path: "actions",
-        label: "Actions",
-        element: <ActionsPage />,
         isBackgroundTransparent: true,
       },
       {
@@ -148,7 +141,13 @@ const hiddenRoutes: RouteItem[] = [
   {
     path: "/actions",
     label: "Actions",
-    element: <RouteRedirect to="/workflow/actions" />,
+    element: <RouteRedirect to="/workflow/cart" />,
+    isBackgroundTransparent: true,
+  },
+  {
+    path: "/workflow/actions",
+    label: "Actions",
+    element: <RouteRedirect to="/workflow/cart" />,
     isBackgroundTransparent: true,
   },
 ];

@@ -423,6 +423,9 @@ plots:
             - unit_cell_a
             - unit_cell_b
             - unit_cell_c
+            - unit_cell_alpha
+            - unit_cell_beta
+            - unit_cell_gamma
         - type: vega
           title: a vs b
           width_fraction: 0.22

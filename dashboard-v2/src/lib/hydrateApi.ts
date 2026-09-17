@@ -67,6 +67,36 @@ export type HydrateResult = {
   data_root?: string;
 };
 
+export type HydrateProgress = {
+  phase: string;
+  current?: number;
+  total?: number;
+  uuid?: string;
+  message?: string;
+  result?: HydrateResult;
+};
+
+export function hydrateProgressPercent(progress: HydrateProgress | null): number {
+  if (!progress) return 0;
+  if (progress.phase === "done") return 100;
+  if (progress.phase === "error") return 100;
+  const total = progress.total ?? 0;
+  const current = progress.current ?? 0;
+  if (total <= 0) return progress.phase === "start" ? 2 : 0;
+  // Download is ~70% of the bar; register is the remaining ~30%.
+  if (progress.phase === "download" || progress.phase === "download_error") {
+    return Math.min(70, Math.round((current / total) * 70));
+  }
+  if (
+    progress.phase === "register" ||
+    progress.phase === "register_start" ||
+    progress.phase === "register_error"
+  ) {
+    return Math.min(99, 70 + Math.round((current / Math.max(total, 1)) * 30));
+  }
+  return 5;
+}
+
 export async function hydrateHealth(
   baseUrl = getHydrateUrl(),
 ): Promise<{ ok: boolean; detail: string }> {
@@ -87,30 +117,109 @@ export async function hydrateHealth(
   }
 }
 
+async function readNdjsonStream(
+  res: Response,
+  onProgress?: (p: HydrateProgress) => void,
+): Promise<HydrateResult> {
+  if (!res.body) {
+    throw new Error("Hydrate stream returned no body");
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResult: HydrateResult | null = null;
+  let lastError: string | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let event: HydrateProgress;
+      try {
+        event = JSON.parse(trimmed) as HydrateProgress;
+      } catch {
+        continue;
+      }
+      onProgress?.(event);
+      if (event.result) {
+        finalResult = event.result;
+      }
+      if (event.phase === "error" && event.message) {
+        lastError = event.message;
+      }
+    }
+  }
+
+  const trailing = buffer.trim();
+  if (trailing) {
+    try {
+      const event = JSON.parse(trailing) as HydrateProgress;
+      onProgress?.(event);
+      if (event.result) finalResult = event.result;
+      if (event.phase === "error" && event.message) lastError = event.message;
+    } catch {
+      // ignore incomplete trailing chunk
+    }
+  }
+
+  if (finalResult) return finalResult;
+  throw new Error(lastError || "Hydrate stream ended without a result");
+}
+
 /**
  * Download RO-Crates from the facility and register them in local Tiled.
+ * Uses NDJSON progress streaming by default.
  */
 export async function storeCratesToLocalTiled(
   uuids: string[],
   options?: {
     facilityUrl?: string;
     hydrateUrl?: string;
+    onProgress?: (p: HydrateProgress) => void;
   },
 ): Promise<HydrateResult> {
   const base = normalizeHydrateUrl(options?.hydrateUrl ?? getHydrateUrl());
   const facility_url = options?.facilityUrl ?? getFacilityUrl();
-  const res = await fetch(`${base}/api/v1/hydrate`, {
+  const res = await fetch(`${base}/api/v1/hydrate?stream=1`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/x-ndjson",
+    },
     body: JSON.stringify({ uuids, facility_url }),
   });
+
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("ndjson") || contentType.includes("stream")) {
+    if (!res.ok && res.status !== 207) {
+      // Still try to parse stream for structured error.
+      try {
+        return await readNdjsonStream(res, options?.onProgress);
+      } catch {
+        throw new Error(`Store failed (HTTP ${res.status})`);
+      }
+    }
+    return readNdjsonStream(res, options?.onProgress);
+  }
+
   const body = (await res.json()) as HydrateResult;
   if (!res.ok && res.status !== 207) {
     throw new Error(
-      (body as { tiled_registry_error?: string }).tiled_registry_error ||
-        `Store failed (HTTP ${res.status})`,
+      body.tiled_registry_error || `Store failed (HTTP ${res.status})`,
     );
   }
+  options?.onProgress?.({
+    phase: "done",
+    current: uuids.length,
+    total: uuids.length,
+    message: "Done",
+    result: body,
+  });
   return body;
 }
 
