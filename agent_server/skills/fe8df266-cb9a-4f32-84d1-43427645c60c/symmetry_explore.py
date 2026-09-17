@@ -126,6 +126,27 @@ def _op_key(op) -> str:
     return op.as_xyz()
 
 
+def _ita_xyz(op) -> str:
+    """ITA-style xyz with a space after each comma."""
+    return ", ".join(part.strip() for part in op.as_xyz().split(","))
+
+
+def _ordered_general_positions(ops) -> list[str]:
+    """Identity first, then a stable (W, w) order — not frozenset iteration."""
+    from agentsg.symmetry_op import SymmetryOp
+
+    identity = SymmetryOp.identity()
+    rest = [op for op in ops if op != identity]
+    rest.sort(
+        key=lambda op: (
+            tuple(tuple(int(c) for c in row) for row in op.W.rows),
+            tuple((t.numerator, t.denominator) for t in op.w.v),
+        )
+    )
+    ordered = ([identity] if identity in ops else []) + rest
+    return [_ita_xyz(op) for op in ordered]
+
+
 def _closed_subgroups(ops):
     """All closed subgroups of ``ops`` under composition (same lattice).
 
@@ -385,6 +406,7 @@ def explore(
     sg_key = int(sg) if isinstance(sg, str) and sg.strip().isdigit() else sg
     sg_rec = space_group(sg_key)
     sg_number, sg_hm = sg_rec.number, sg_rec.hermann_mauguin
+    general_positions = _ordered_general_positions(sg_rec.operations())
     cell = tuple(float(x) for x in cell)
 
     data_dir = output_dir / "data"
@@ -422,8 +444,16 @@ def explore(
             "sg": sg,
             "sg_number": sg_number,
             "sg_hm": sg_hm,
+            "hall": sg_rec.hall,
             "centering": lattice_letter(sg_hm),
             "max_delta_deg": max_delta,
+        },
+        "space_group": {
+            "number": sg_number,
+            "hm": sg_hm,
+            "hall": sg_rec.hall,
+            "order": len(general_positions),
+            "general_positions": general_positions,
         },
         "metric_symmetry": {
             "crystal_system": ls.crystal_system,

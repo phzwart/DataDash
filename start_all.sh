@@ -5,8 +5,6 @@
 #   ./start_all.sh
 #   SKIP_DASHBOARD=1 ./start_all.sh
 #   ./start_all.sh --stop
-#   ./start_all.sh --tunnel          # reprint tunnel instructions
-#   ./start_all.sh --tunnel-out      # VDI side: reverse-tunnel to ssh.bnl.gov (Duo)
 #
 # Ports: facility :8767, client_store :8770, agent :8780, dashboard :5175
 #set -euo pipefail
@@ -140,188 +138,9 @@ launch() {
   echo "  started $name (pid $pid)"
 }
 
-# Fixed-width Unicode box. Empty string = blank row; "---" = horizontal rule.
-print_box() {
-  local lines=("$@")
-  local max=56
-  local line
-  for line in "${lines[@]}"; do
-    [[ "$line" == "---" ]] && continue
-    if (( ${#line} > max )); then
-      max=${#line}
-    fi
-  done
-  local bar
-  bar="$(printf '═%.0s' $(seq 1 $((max + 2))))"
-  printf '╔%s╗\n' "$bar"
-  for line in "${lines[@]}"; do
-    if [[ "$line" == "---" ]]; then
-      printf '╠%s╣\n' "$bar"
-    else
-      printf '║ %-*s ║\n' "$max" "$line"
-    fi
-  done
-  printf '╚%s╝\n' "$bar"
-}
-
-tunnel_user() {
-  if [[ -n "${SSH_USER:-}" ]]; then
-    printf '%s\n' "$SSH_USER"
-    return
-  fi
-  local u cand
-  u="$(whoami 2>/dev/null || true)"
-  if [[ -n "$u" && "$u" != "root" ]]; then
-    printf '%s\n' "$u"
-    return
-  fi
-  for cand in "${SUDO_USER:-}" "${LOGNAME:-}" "${USER:-}"; do
-    if [[ -n "$cand" && "$cand" != "root" ]]; then
-      printf '%s\n' "$cand"
-      return
-    fi
-  done
-  if [[ "${HOME:-}" =~ /users/([^/]+) ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}"
-    return
-  fi
-  if [[ "${ROOT:-}" =~ /users/([^/]+) ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}"
-    return
-  fi
-  printf '%s\n' "${u:-pzwart}"
-}
-
-# Primary site IPv4 (DHCP on this Omnissa VM). Prefer over hostname:
-# vdi-<ip>.nsls2.bnl.gov is local DNS and often does not resolve from a laptop.
-tunnel_ip() {
-  if [[ -n "${TUNNEL_IP:-}" ]]; then
-    printf '%s\n' "$TUNNEL_IP"
-    return
-  fi
-  local ip host
-  ip="$(ip -4 -o addr show scope global 2>/dev/null \
-    | awk '{print $4}' | cut -d/ -f1 \
-    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
-    | grep -vE '^(127\.|0\.)' \
-    | head -1 || true)"
-  if [[ -z "$ip" ]]; then
-    host="$(hostname -f 2>/dev/null || hostname || true)"
-    if [[ "$host" =~ vdi-([0-9]+)-([0-9]+)-([0-9]+)-([0-9]+) ]]; then
-      ip="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.${BASH_REMATCH[4]}"
-    fi
-  fi
-  if [[ -z "$ip" ]]; then
-    ip="$(hostname -I 2>/dev/null | awk '{
-      for (i = 1; i <= NF; i++)
-        if ($i !~ /^127\./ && $i !~ /^0\./) { print $i; exit }
-    }')"
-  fi
-  printf '%s\n' "$ip"
-}
-
-tunnel_hostname() {
-  if [[ -n "${TUNNEL_HOST:-}" ]]; then
-    printf '%s\n' "$TUNNEL_HOST"
-    return
-  fi
-  hostname -f 2>/dev/null || hostname
-}
-
-print_laptop_tunnel() {
-  local user ip host jump horizon
-  user="$(tunnel_user)"
-  ip="$(tunnel_ip)"
-  host="$(tunnel_hostname)"
-  # ssh.nsls2.bnl.gov does not resolve from this Omnissa VLAN.
-  # ssh.bnl.gov (130.199.3.57) is reachable outbound from the VDI.
-  jump="${SSH_JUMP:-ssh.bnl.gov}"
-  rport="${REMOTE_TUNNEL_PORT:-28767}"
-  horizon="${CDC_LOCALHOST:-${CDC_PREW2KHOST:-}}"
-
-  local target
-  target="${TUNNEL_HOST:-${ip:-$host}}"
-
-  local fport cport aport
-  fport="$FACILITY_PORT"
-  cport="$CLIENT_PORT"
-  aport="$AGENT_PORT"
-
-  local kind="Linux host"
-  if [[ -n "$horizon" ]] || [[ "$host" == vdi-* ]]; then
-    kind="Omnissa Horizon VDI (virtual desktop)"
-  fi
-  local horizon_line=" "
-  if [[ -n "$horizon" ]]; then
-    horizon_line="  Horizon:   ${horizon}"
-  fi
-
-  echo
-  print_box \
-    "LAPTOP - SSH tunnel to this facility search API" \
-    --- \
-    "${kind}" \
-    "  SSH user:  ${user}" \
-    "  VM IP:     ${ip:-unknown}" \
-    "  hostname:  ${host}" \
-    "${horizon_line}" \
-    "  API bind:  127.0.0.1:${fport}  (loopback only)" \
-    "" \
-    "Inbound SSH to this Omnissa VM is blocked (jump and VPN both time out)." \
-    "This VM CAN SSH out to ${jump}. Use a reverse tunnel." \
-    "" \
-    "A) In a terminal ON THIS VDI (Duo). Or:  ./start_all.sh --tunnel-out" \
-    "" \
-    "  ssh -N -R ${rport}:127.0.0.1:${fport} \\" \
-    "      -o ServerAliveInterval=30 \\" \
-    "      -o ServerAliveCountMax=6 \\" \
-    "      -o TCPKeepAlive=yes \\" \
-    "      -o ExitOnForwardFailure=yes \\" \
-    "      ${user}@${jump}" \
-    "" \
-    "B) On the laptop (VPN). Same gateway -- do NOT hop to the VM IP:" \
-    "" \
-    "  ssh -N -L ${fport}:127.0.0.1:${rport} \\" \
-    "      -o ServerAliveInterval=30 \\" \
-    "      -o ServerAliveCountMax=6 \\" \
-    "      -o TCPKeepAlive=yes \\" \
-    "      -o ExitOnForwardFailure=yes \\" \
-    "      ${user}@${jump}" \
-    "" \
-    "Then on the laptop:" \
-    "" \
-    "  curl http://127.0.0.1:${fport}/api/v1/health" \
-    "  curl 'http://127.0.0.1:${fport}/api/v1/search?technique=MX'" \
-    "  curl http://127.0.0.1:${fport}/api/v1/experiments/06884aee-cc7a-5c27-99a1-011fd73fcf61/rocrate" \
-    "" \
-    "Override:  SSH_JUMP=...  REMOTE_TUNNEL_PORT=...  SSH_USER=..."
-  echo
-}
-
 if [[ "${1:-}" == "--stop" ]] || [[ "${1:-}" == "stop" ]]; then
   stop_all
   exit 0
-fi
-
-if [[ "${1:-}" == "--tunnel" ]] || [[ "${1:-}" == "tunnel" ]]; then
-  print_laptop_tunnel
-  exit 0
-fi
-
-if [[ "${1:-}" == "--tunnel-out" ]] || [[ "${1:-}" == "tunnel-out" ]]; then
-  user="$(tunnel_user)"
-  jump="${SSH_JUMP:-ssh.bnl.gov}"
-  rport="${REMOTE_TUNNEL_PORT:-28767}"
-  fport="$FACILITY_PORT"
-  echo "Reverse-tunnel  ${jump}:127.0.0.1:${rport}  ->  this VM 127.0.0.1:${fport}"
-  echo "Leave this window open. On the laptop use the (B) command from --tunnel."
-  echo
-  exec ssh -N -R "${rport}:127.0.0.1:${fport}" \
-    -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=6 \
-    -o TCPKeepAlive=yes \
-    -o ExitOnForwardFailure=yes \
-    "${user}@${jump}"
 fi
 
 need_file "$DATA_ROOT"
@@ -372,13 +191,15 @@ fi
 
 echo
 echo "waiting for health…"
-wait_http "http://$FACILITY_HOST:$FACILITY_PORT/api/v1?api_key=$TILED_API_KEY" facility
-wait_http "http://$CLIENT_HOST:$CLIENT_PORT/api/v1?api_key=$TILED_API_KEY" client
+# Facility Tiled ingest of MyROCrates can take a couple of minutes.
+wait_http "http://$FACILITY_HOST:$FACILITY_PORT/api/v1/health" facility 300
+wait_http "http://$CLIENT_HOST:$CLIENT_PORT/api/v1/health" client 120
 wait_http "http://$AGENT_HOST:$AGENT_PORT/api/v1/agents" agent
 
 echo
-echo "running:"
+echo "running (localhost only):"
 echo "  facility     http://$FACILITY_HOST:$FACILITY_PORT"
+echo "  search       curl http://$FACILITY_HOST:$FACILITY_PORT/api/v1/search"
 echo "  client_store http://$CLIENT_HOST:$CLIENT_PORT"
 echo "  agent_server http://$AGENT_HOST:$AGENT_PORT"
 if [[ -f "$PID_DIR/dashboard.pid" ]]; then
@@ -387,5 +208,3 @@ fi
 echo
 echo "stop with:  $ROOT/start_all.sh --stop"
 echo "logs:       tail -f $LOG_DIR/*.log"
-echo "reprint:    $ROOT/start_all.sh --tunnel"
-print_laptop_tunnel

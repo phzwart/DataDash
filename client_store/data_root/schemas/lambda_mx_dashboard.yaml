@@ -197,9 +197,10 @@ crate:
                   alt: International Tables symmetry diagram
                 - kind: table
                   title: General positions
-                  rows: metric_symmetry.operations
+                  rows: space_group.general_positions
                   primitive: string
                   value_label: xyz
+                  limit: 192
             - kind: summary
               title: Space-group subgroups
               items:
