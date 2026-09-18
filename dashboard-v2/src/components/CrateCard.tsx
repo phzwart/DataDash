@@ -84,7 +84,7 @@ export default function CrateCard({
   return (
     <div className={`relative isolate flex min-w-0 h-full flex-col ${className}`}>
       <article
-        className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-md shadow-lg border border-sky-400/70 ring-1 ring-sky-400/40 hover:border-sky-300 hover:ring-sky-300/60 transition-shadow bg-slate-900/60"
+        className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-md shadow-lg border border-sky-400/70 ring-1 ring-sky-400/40 hover:border-sky-300 hover:ring-sky-300/60 transition-shadow bg-slate-900"
       >
         <div
           className="crate-card-color-strip"

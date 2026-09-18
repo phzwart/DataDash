@@ -1,0 +1,86 @@
+# Project Book UI (NOT LinkML). Same role as lambda_mx_dashboard.yaml:
+# developer-owned Finch layout. LinkML is lambda_project_book.yaml.
+id: http://127.0.0.1:8770/schemas/lambda_project_book_dashboard.yaml
+title: Project Book
+schema_uri: http://127.0.0.1:8770/schemas/lambda_project_book.yaml
+ledger_entry_base: LedgerEntry
+default_subproject_title: Unsorted
+title_slot: label
+
+# Spacing and arrangement. Density sets defaults; explicit lengths win.
+# density: compact | cozy | comfortable  (same vocabulary as crate gallery)
+layout:
+  density: cozy
+  page_gap: 1.75rem
+  paper_pad: 1.5rem
+  section_gap: 2rem
+  chip_gap: 0.65rem
+  form_gap: 0.85rem
+  narrative_max_width: 42rem
+  # Wrap chips / compact controls; a typed text box always takes the next line.
+  items_per_row: 3
+  textbox_own_line: true
+  ledger:
+    columns: 2
+    form_field_width: 11rem
+    chip_min_width: 8rem
+  workspace:
+    tree_width: 22rem
+  wide_slots:
+    - notes
+    - narrative
+    - sequence
+    - smiles
+    - inchi
+
+ledger:
+  sections:
+    - id: collaborators
+      title: Collaborators
+      class: Collaborator
+      chip_slots:
+        - role
+        - affiliation
+      form_slots:
+        - label
+        - full_name
+        - role
+        - affiliation
+        - email
+        - notes
+    - id: sequences
+      title: Sequences
+      class: Sequence
+      chip_slots:
+        - sequence_type
+        - organism
+      form_slots:
+        - label
+        - sequence_type
+        - sequence
+        - organism
+        - notes
+    - id: compounds
+      title: Compounds
+      class: Compound
+      chip_slots:
+        - formula
+      form_slots:
+        - label
+        - smiles
+        - formula
+        - inchi
+        - notes
+    - id: conditions
+      title: Conditions
+      class: Condition
+      chip_slots:
+        - condition_type
+        - value
+        - units
+      form_slots:
+        - label
+        - condition_type
+        - value
+        - units
+        - notes

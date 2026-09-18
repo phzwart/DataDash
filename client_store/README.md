@@ -19,6 +19,7 @@ Endpoints:
 | `http://127.0.0.1:8770/api/v1` | Local Tiled (gallery / plots) |
 | `POST /api/v1/hydrate` | Pull cart UUIDs from a facility into this store |
 | `GET /api/v1/hydrate/health` | Liveness |
+| `/api/v1/project-book/*` | Home Project Book (projects, ledger, subprojects) |
 
 ### Hydrate body
 

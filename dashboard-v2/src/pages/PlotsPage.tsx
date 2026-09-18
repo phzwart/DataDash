@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -9,9 +10,11 @@ import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Paper } from "@blueskyproject/finch";
 import { CaretDown, CaretRight, Star } from "@phosphor-icons/react";
+import AssignSelectionBar from "../components/AssignSelectionBar";
 import MarkerFilterBar, {
   type MarkerFilters,
 } from "../components/MarkerFilterBar";
+import { useBookSearchSync, writeBookContext } from "../lib/bookContext";
 import { resolveDashboardUri } from "../lib/dashboardConfig";
 import {
   COLOR_TAG_OPTIONS,
@@ -21,10 +24,25 @@ import {
   subscribeCrateMarkers,
 } from "../lib/crateMarkers";
 import {
+  filterByScope,
+  filterOrganizeUniverse,
+  instrumentsInScope,
+  scopeLabel,
+} from "../lib/organizeScope";
+import {
+  clearPlotSelection,
+  clipPlotSelectionToUniverse,
   getPlotSelection,
-  setPlotSelection,
+  setCombineMode,
+  setPlotBrush,
   subscribePlotSelection,
 } from "../lib/plotSelection";
+import {
+  fetchPlacements,
+  fetchProject,
+  fetchProjects,
+} from "../lib/projectBookApi";
+import { sampleAffinityCoords } from "../lib/sampleAffinity";
 import {
   enumDisplay,
   fetchDashboardConfig,
@@ -32,6 +50,7 @@ import {
   resolvePlotLayout,
   resolveRowPanelLayout,
   slotLabel,
+  type AffinityPlotSpec,
   type HistogramPlotSpec,
   type ParsedSchema,
   type PlotRowSpec,
@@ -39,12 +58,29 @@ import {
 } from "../lib/schema";
 import { fetchCrates, type CrateSummary } from "../lib/tiledCrates";
 import {
+  affinityToVegaSpec,
   categoricalToVegaSpec,
   histogramToVegaSpec,
   scatterToVegaSpec,
 } from "../viz/bindVegaSpec";
 import UnitCell3DView from "../viz/UnitCell3DView";
 import VegaLiteView from "../viz/VegaLiteView";
+
+function cratesWithAffinity(
+  crates: CrateSummary[],
+  field: string,
+): CrateSummary[] {
+  const labels = crates.map((c) => String(c.metadata[field] ?? ""));
+  const coords = sampleAffinityCoords(labels);
+  return crates.map((c, i) => ({
+    ...c,
+    metadata: {
+      ...c.metadata,
+      name_x: coords[i]?.[0] ?? 0,
+      name_y: coords[i]?.[1] ?? 0,
+    },
+  }));
+}
 
 function CollapsiblePlot({
   id,
@@ -245,6 +281,51 @@ function MetadataTable({
   );
 }
 
+function AffinityPanel({
+  panel,
+  crates,
+  layout,
+  sourceId,
+  onSelect,
+}: {
+  panel: AffinityPlotSpec;
+  crates: CrateSummary[];
+  layout: import("../lib/schema").ResolvedPlotLayout;
+  sourceId: string;
+  onSelect: (source: string, ids: string[]) => void;
+}) {
+  const field = panel.field ?? "sample_code";
+  const points = useMemo(
+    () => cratesWithAffinity(crates, field),
+    [crates, field],
+  );
+  return (
+    <div className="min-w-0">
+      {panel.title ? (
+        <h3 className="text-sm font-medium text-slate-200 mb-1 truncate">
+          {panel.title}
+        </h3>
+      ) : null}
+      <p className="text-[11px] text-slate-500 mb-1 leading-snug">
+        {panel.caption ??
+          "Nearby points have similar sample codes (string distance, MDS)."}
+      </p>
+      <VegaLiteView
+        crates={points}
+        layout={layout}
+        fill
+        sourceId={sourceId}
+        onSelectionChange={onSelect}
+        compiledSpec={affinityToVegaSpec(panel)}
+        panel={{
+          title: panel.title,
+          selection: panel.selection ?? { mode: "lasso", id_field: "id" },
+        }}
+      />
+    </div>
+  );
+}
+
 function PlotRows({
   rows,
   crates,
@@ -256,7 +337,7 @@ function PlotRows({
   crates: CrateSummary[];
   schema: ParsedSchema | undefined;
   defaults: import("../lib/schema").PlotLayoutSpec | undefined;
-  onSelectFromChart: (source: string, ids: string[]) => void;
+  onSelectFromChart: (source: string, ids: string[], title: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-4 w-full">
@@ -279,6 +360,12 @@ function PlotRows({
               );
               const key = `${row.id ?? rowIdx}-${panel.type}-${i}`;
               const sourceId = `row:${row.id ?? rowIdx}:${panel.type}:${i}`;
+              const panelTitle =
+                "title" in panel && typeof panel.title === "string" && panel.title
+                  ? panel.title
+                  : panel.type;
+              const onSelect = (src: string, ids: string[]) =>
+                onSelectFromChart(src, ids, panelTitle);
               return (
                 <div
                   key={key}
@@ -317,7 +404,7 @@ function PlotRows({
                         layout={layout}
                         fill
                         sourceId={sourceId}
-                        onSelectionChange={onSelectFromChart}
+                        onSelectionChange={onSelect}
                       />
                     </div>
                   ) : panel.type === "three" ? (
@@ -327,7 +414,7 @@ function PlotRows({
                       layout={layout}
                       fill
                       sourceId={sourceId}
-                      onSelectionChange={onSelectFromChart}
+                      onSelectionChange={onSelect}
                     />
                   ) : panel.type === "scatter" ? (
                     <div className="min-w-0">
@@ -339,10 +426,18 @@ function PlotRows({
                         layout={layout}
                         fill
                         sourceId={sourceId}
-                        onSelectionChange={onSelectFromChart}
+                        onSelectionChange={onSelect}
                         compiledSpec={scatterToVegaSpec(panel)}
                       />
                     </div>
+                  ) : panel.type === "affinity" ? (
+                    <AffinityPanel
+                      panel={panel}
+                      crates={crates}
+                      layout={layout}
+                      sourceId={sourceId}
+                      onSelect={onSelect}
+                    />
                   ) : (
                     <p className="text-xs text-slate-500">
                       Unsupported panel type in row: {panel.type}
@@ -367,10 +462,9 @@ type PlotEntry = {
 };
 
 export default function PlotsPage() {
+  const book = useBookSearchSync();
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [selectionCount, setSelectionCount] = useState(
-    () => getPlotSelection().ids.length,
-  );
+  const [selection, setSelection] = useState(getPlotSelection);
   const [markerFilters, setMarkerFilters] = useState<MarkerFilters>({
     minStars: 0,
     colorTag: "any",
@@ -380,10 +474,7 @@ export default function PlotsPage() {
   const [, markerBump] = useState(0);
 
   useEffect(
-    () =>
-      subscribePlotSelection(() =>
-        setSelectionCount(getPlotSelection().ids.length),
-      ),
+    () => subscribePlotSelection(() => setSelection(getPlotSelection())),
     [],
   );
   useEffect(() => subscribeCrateMarkers(() => markerBump((n) => n + 1)), []);
@@ -411,19 +502,84 @@ export default function PlotsPage() {
     queryKey: ["crates"],
     queryFn: fetchCrates,
   });
+  const placementsQuery = useQuery({
+    queryKey: ["project-book-placements"],
+    queryFn: fetchPlacements,
+  });
+  const projectsQuery = useQuery({
+    queryKey: ["project-book-projects"],
+    queryFn: fetchProjects,
+  });
+  const projectQuery = useQuery({
+    queryKey: ["project-book-project", book.projectId],
+    queryFn: () => fetchProject(book.projectId!),
+    enabled: Boolean(book.projectId),
+  });
 
-  const crates = useMemo(() => {
-    const all = cratesQuery.data ?? [];
-    return filterCratesByMarkers(all, markerFilters, getCrateMarkerStore());
-  }, [cratesQuery.data, markerFilters]);
+  const placements = placementsQuery.data?.placements ?? [];
+  const scopedBeforeFacets = useMemo(
+    () =>
+      filterByScope(
+        cratesQuery.data ?? [],
+        placements,
+        book.scope,
+        book.projectId,
+      ),
+    [cratesQuery.data, placements, book.scope, book.projectId],
+  );
+  const instruments = useMemo(
+    () => instrumentsInScope(scopedBeforeFacets),
+    [scopedBeforeFacets],
+  );
+
+  const universe = useMemo(
+    () =>
+      filterOrganizeUniverse(cratesQuery.data ?? [], placements, book),
+    [cratesQuery.data, placements, book],
+  );
+
+  const crates = useMemo(
+    () => filterCratesByMarkers(universe, markerFilters, getCrateMarkerStore()),
+    [universe, markerFilters],
+  );
   const totalCrates = cratesQuery.data?.length ?? 0;
   const plots = dashQuery.data?.plots;
   const schema = schemaQuery.data;
   const plotDefaults = plots?.defaults;
+  const projectTitle =
+    projectQuery.data?.title ??
+    projectsQuery.data?.projects.find((p) => p.id === book.projectId)?.title ??
+    null;
 
-  const setFromChart = useCallback((source: string, ids: string[]) => {
-    setPlotSelection(ids, source);
-  }, []);
+  const universeKey = universe.map((c) => c.id).join("|");
+  const scopeKey = `${book.scope}|${book.projectId ?? ""}|${book.instrument}|${book.dateFrom}|${book.dateTo}`;
+  const prevScope = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevScope.current === null) {
+      prevScope.current = scopeKey;
+      return;
+    }
+    if (prevScope.current !== scopeKey) {
+      prevScope.current = scopeKey;
+      clearPlotSelection();
+    }
+  }, [scopeKey]);
+
+  useEffect(() => {
+    if (!cratesQuery.isSuccess || !placementsQuery.isSuccess) return;
+    clipPlotSelectionToUniverse(universe.map((c) => c.id));
+  }, [universeKey, universe, cratesQuery.isSuccess, placementsQuery.isSuccess]);
+
+  useEffect(() => {
+    setCombineMode(book.combine);
+  }, [book.combine]);
+
+  const setFromChart = useCallback(
+    (source: string, ids: string[], title?: string) => {
+      setPlotBrush(source, title ?? source, ids);
+    },
+    [],
+  );
 
   const toggle = useCallback((id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
@@ -436,10 +592,11 @@ export default function PlotsPage() {
     for (const [i, spec] of (plots.vega ?? []).entries()) {
       const id = `vega:${i}:${spec.title ?? spec.spec_uri ?? "chart"}`;
       const layout = resolvePlotLayout(plotDefaults, spec);
+      const title = spec.title ?? `Vega chart ${i + 1}`;
       list.push({
         id,
         kind: "vega",
-        title: spec.title ?? `Vega chart ${i + 1}`,
+        title,
         summary: `${crates.length} datasets · brush / click`,
         render: () => (
           <VegaLiteView
@@ -447,7 +604,7 @@ export default function PlotsPage() {
             crates={crates}
             layout={layout}
             sourceId={id}
-            onSelectionChange={setFromChart}
+            onSelectionChange={(src, ids) => setFromChart(src, ids, title)}
           />
         ),
       });
@@ -468,7 +625,7 @@ export default function PlotsPage() {
             crates={crates}
             layout={layout}
             sourceId={id}
-            onSelectionChange={setFromChart}
+            onSelectionChange={(src, ids) => setFromChart(src, ids, title)}
             compiledSpec={categoricalToVegaSpec(spec)}
             panel={{ title, selection: { signal: "brush", id_field: "id" } }}
           />
@@ -493,7 +650,7 @@ export default function PlotsPage() {
             crates={crates}
             layout={layout}
             sourceId={id}
-            onSelectionChange={setFromChart}
+            onSelectionChange={(src, ids) => setFromChart(src, ids, title)}
             compiledSpec={histogramToVegaSpec(spec)}
             panel={{
               title,
@@ -524,7 +681,7 @@ export default function PlotsPage() {
             crates={crates}
             layout={layout}
             sourceId={id}
-            onSelectionChange={setFromChart}
+            onSelectionChange={(src, ids) => setFromChart(src, ids, title)}
             compiledSpec={scatterToVegaSpec(spec)}
             panel={{ title, selection: { signal: "brush", id_field: "id" } }}
           />
@@ -535,8 +692,13 @@ export default function PlotsPage() {
     return list;
   }, [plots, plotDefaults, crates, schema, setFromChart]);
 
+  const selectionCount = selection.ids.length;
+  const inUniverse = selection.ids.filter((id) =>
+    crates.some((c) => c.id === id),
+  );
+
   if (uriQuery.isLoading || dashQuery.isLoading || cratesQuery.isLoading) {
-    return <p className="p-6 text-slate-400">Loading plots…</p>;
+    return <p className="p-6 text-slate-400">Loading organize…</p>;
   }
 
   if (dashQuery.error) {
@@ -554,15 +716,11 @@ export default function PlotsPage() {
     <div className="flex flex-col gap-4 p-4 w-full min-h-0 overflow-auto">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-100">
-            {dashQuery.data?.title ?? "Plots"}
-          </h1>
+          <h1 className="text-2xl font-semibold text-slate-100">Organize</h1>
           <p className="text-sm text-slate-400 mt-1">
-            Vega-Lite + Three.js · brush / click to select ·{" "}
-            {crates.length}
-            {crates.length !== totalCrates
-              ? ` of ${totalCrates}`
-              : ""}{" "}
+            Scope the store, brush plots ({book.combine.toUpperCase()}), then
+            assign or send to Workflow · {crates.length}
+            {crates.length !== totalCrates ? ` of ${totalCrates}` : ""}{" "}
             datasets
           </p>
         </div>
@@ -574,9 +732,118 @@ export default function PlotsPage() {
               : "bg-slate-800 text-slate-400 hover:bg-slate-700"
           }`}
         >
-          Selection ({selectionCount})
+          Selection ({inUniverse.length}
+          {inUniverse.length !== selectionCount ? ` of ${selectionCount}` : ""})
         </Link>
       </div>
+
+      <Paper className="p-3 bg-slate-900/70 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-wide text-slate-500">
+            Scope
+          </span>
+          {(["inbox", "project", "all"] as const).map((scope) => (
+            <button
+              key={scope}
+              type="button"
+              disabled={scope === "project" && !book.projectId}
+              onClick={() => writeBookContext({ scope })}
+              className={`px-2.5 py-1 rounded-md text-sm ${
+                book.scope === scope
+                  ? "bg-sky-800 text-sky-50"
+                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+              } disabled:opacity-40`}
+            >
+              {scopeLabel(scope)}
+            </button>
+          ))}
+          <span className="text-xs text-slate-400 ml-1">
+            {projectTitle
+              ? `Project · ${projectTitle}`
+              : "No project selected"}
+            {book.subId && projectQuery.data
+              ? ` / ${
+                  projectQuery.data.subprojects.find((s) => s.id === book.subId)
+                    ?.title ?? "sub"
+                }`
+              : ""}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-sm text-slate-300">
+            Instrument
+            <select
+              value={book.instrument}
+              onChange={(e) => writeBookContext({ instrument: e.target.value })}
+              className="mt-1 block rounded-md bg-slate-800 border border-slate-600 px-2 py-1.5 text-sm text-slate-100 min-w-36"
+            >
+              <option value="">All</option>
+              {instruments.map((inst) => (
+                <option key={inst} value={inst}>
+                  {inst}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm text-slate-300">
+            From
+            <input
+              type="date"
+              value={book.dateFrom}
+              onChange={(e) => writeBookContext({ dateFrom: e.target.value })}
+              className="mt-1 block rounded-md bg-slate-800 border border-slate-600 px-2 py-1.5 text-sm text-slate-100"
+            />
+          </label>
+          <label className="text-sm text-slate-300">
+            To
+            <input
+              type="date"
+              value={book.dateTo}
+              onChange={(e) => writeBookContext({ dateTo: e.target.value })}
+              className="mt-1 block rounded-md bg-slate-800 border border-slate-600 px-2 py-1.5 text-sm text-slate-100"
+            />
+          </label>
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-xs uppercase tracking-wide text-slate-500">
+              Combine
+            </span>
+            {(["or", "and"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => {
+                  writeBookContext({ combine: mode });
+                  setCombineMode(mode);
+                }}
+                className={`px-2.5 py-1 rounded-md text-sm ${
+                  book.combine === mode
+                    ? "bg-violet-800 text-violet-50"
+                    : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+                }`}
+              >
+                {mode.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-xs font-mono text-slate-400">
+          {selection.source ?? `${book.combine.toUpperCase()} · no active brushes`}
+        </p>
+        <AssignSelectionBar
+          crateIds={inUniverse}
+          projectId={book.projectId}
+        />
+      </Paper>
+
+      {book.scope === "project" && !book.projectId && (
+        <Paper className="p-4 text-slate-400 text-sm">
+          Select a project on{" "}
+          <Link to="/" className="text-sky-400 hover:underline">
+            Data &amp; Projects
+          </Link>{" "}
+          first, or switch scope to Inbox or All.
+        </Paper>
+      )}
 
       <MarkerFilterBar
         filters={markerFilters}

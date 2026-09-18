@@ -188,7 +188,7 @@ export default function SearchPage() {
       setStoreMessage(
         errs > 0
           ? `Stored ${n} of ${ids.length} experiment(s) on the local Tiled server with ${errs} error(s)${regNote}.`
-          : `Stored ${n} experiment(s) on the local Tiled server${regNote}. Open Data Overview or Plots.`,
+          : `Stored ${n} experiment(s) on the local Tiled server${regNote}. Open Data & Projects or Organize.`,
       );
       setSelected(new Set());
       void queryClient.invalidateQueries({ queryKey: ["crates"] });
@@ -270,10 +270,10 @@ export default function SearchPage() {
             Filter by category, search, build a selection, then store hits on
             the local Tiled server. Open{" "}
             <Link
-              to="/crates"
+              to="/"
               className="font-medium text-sky-400 hover:underline"
             >
-              Data Overview
+              Data &amp; Projects
             </Link>{" "}
             to browse what is already stored locally.
           </p>
@@ -282,7 +282,7 @@ export default function SearchPage() {
           </p>
         </div>
         <Link
-          to="/crates"
+          to="/"
           className="inline-flex items-center gap-2 rounded-md bg-sky-800 px-3 py-2 text-sm font-medium text-slate-50 no-underline hover:bg-sky-700"
         >
           <HardDrives size={16} weight="bold" />

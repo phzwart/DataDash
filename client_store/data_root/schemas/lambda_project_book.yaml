@@ -1,0 +1,172 @@
+id: http://127.0.0.1:8770/schemas/lambda_project_book.yaml
+name: lambda_project_book
+title: Lambda Project Book
+description: >-
+  Developer-owned LinkML contract for the home Project Book: a project owns a
+  narrative, an extensible ledger of extras (not in the RO-Crate), and a tree
+  of subprojects that hold crate UUID relations. Users fill instances; they do
+  not edit this file. A later overlay may add LedgerEntry subclasses.
+license: CC-BY-4.0
+prefixes:
+  linkml: https://w3id.org/linkml/
+  lpb: https://example.org/lambda-project-book/
+default_prefix: lpb
+default_range: string
+imports:
+  - linkml:types
+
+classes:
+  Project:
+    description: Outer capsule. Owns the ledger and the subproject tree.
+    slots:
+      - id
+      - title
+      - narrative
+      - crate_membership
+      - schema_uri
+      - dashboard_uri
+  Subproject:
+    description: Tree node under a project. Holds crate relations and assigned ledger rows.
+    slots:
+      - id
+      - title
+      - narrative
+      - parent_id
+  LedgerEntry:
+    abstract: true
+    description: >-
+      Base class for ledger catalog rows. Walk is_a: LedgerEntry to discover
+      kinds — do not hardcode subclass names in code.
+    slots:
+      - id
+      - label
+      - notes
+  Collaborator:
+    is_a: LedgerEntry
+    description: A person on the project.
+    slots:
+      - full_name
+      - role
+      - affiliation
+      - email
+  Sequence:
+    is_a: LedgerEntry
+    description: Amino-acid or nucleic-acid sequence not stored on the crate.
+    slots:
+      - sequence
+      - sequence_type
+      - organism
+  Compound:
+    is_a: LedgerEntry
+    description: Small molecule (SMILES / identifiers) to assign to soaks or trays.
+    slots:
+      - smiles
+      - inchi
+      - formula
+  Condition:
+    is_a: LedgerEntry
+    description: Experimental condition (buffer, pH, temperature, soak, cryo, …).
+    slots:
+      - condition_type
+      - value
+      - units
+
+slots:
+  id:
+    identifier: true
+    range: string
+  title:
+    range: string
+    required: true
+  narrative:
+    range: string
+    description: Free-text protocol / story for this project or subproject.
+  crate_membership:
+    range: CrateMembership
+    description: exclusive (default) or shared crate placement policy.
+  schema_uri:
+    range: uri
+  dashboard_uri:
+    range: uri
+  parent_id:
+    range: string
+  label:
+    range: string
+    required: true
+    description: Short name shown on catalog chips and assignment pickers.
+  notes:
+    range: string
+  full_name:
+    range: string
+    title: Name
+  role:
+    range: CollaboratorRole
+  affiliation:
+    range: string
+  email:
+    range: string
+  sequence:
+    range: string
+    description: One-letter sequence.
+  sequence_type:
+    range: SequenceType
+  organism:
+    range: string
+  smiles:
+    range: string
+    title: SMILES
+  inchi:
+    range: string
+    title: InChI
+  formula:
+    range: string
+  condition_type:
+    range: ConditionType
+  value:
+    range: string
+  units:
+    range: string
+
+enums:
+  CrateMembership:
+    permissible_values:
+      exclusive:
+        description: One subproject at a time (filing moves the relation).
+      shared:
+        description: Same crate UUID may sit on several subprojects.
+  CollaboratorRole:
+    permissible_values:
+      pi:
+        description: Principal investigator
+      scientist:
+        description: Scientist
+      student:
+        description: Student
+      collaborator:
+        description: Collaborator
+      other:
+        description: Other
+  SequenceType:
+    permissible_values:
+      protein:
+        description: Protein
+      dna:
+        description: DNA
+      rna:
+        description: RNA
+      other:
+        description: Other
+  ConditionType:
+    permissible_values:
+      buffer:
+        description: Buffer
+      pH:
+        description: pH
+      temperature:
+        description: Temperature
+      ligand_soak:
+        description: Ligand soak
+      cryo:
+        description: Cryo
+      other:
+        description: Other

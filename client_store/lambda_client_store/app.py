@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from lambda_client_store.hydrate import hydrate_one, normalize_facility_base
+from lambda_client_store.project_book_api import mount_project_book
 from rocrate_tiled.app import create_app
 from rocrate_tiled.tiled_registry import iter_ingest_via_app
 
@@ -308,6 +309,15 @@ def build_app(
         use_tiled=True,
     )
     _mount_hydrate(app, data_root=data_root)
+    book_db = Path(
+        os.environ.get("PROJECT_BOOK_DB")
+        or (DEFAULT_ROOT / "var" / "project_book.db")
+    )
+    mount_project_book(
+        app,
+        db_path=book_db,
+        schemas_dir=data_root / "schemas",
+    )
     return app
 
 
@@ -345,6 +355,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(
         f"Hydrate POST: http://{args.host}:{args.port}/api/v1/hydrate",
+        file=sys.stderr,
+    )
+    print(
+        f"Project Book: http://{args.host}:{args.port}/api/v1/project-book/projects",
         file=sys.stderr,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

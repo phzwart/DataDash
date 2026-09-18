@@ -4,6 +4,7 @@
 
 import type { VisualizationSpec } from "vega-embed";
 import type {
+  AffinityPlotSpec,
   CategoricalPlotSpec,
   HistogramPlotSpec,
   ScatterPlotSpec,
@@ -147,6 +148,55 @@ export function scatterToVegaSpec(spec: ScatterPlotSpec): VisualizationSpec {
     title: spec.title,
     mark: { type: "point", filled: true, size: 80 },
     encoding,
+    params: [
+      {
+        name: "click_sel",
+        select: { type: "point", fields: ["id"], toggle: true },
+      },
+    ],
+  } as VisualizationSpec;
+}
+
+export function affinityToVegaSpec(spec: AffinityPlotSpec): VisualizationSpec {
+  return {
+    $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+    title: spec.title,
+    mark: { type: "point", filled: true, size: 80 },
+    encoding: {
+      x: {
+        field: "name_x",
+        type: "quantitative",
+        scale: { zero: false },
+        title: "MDS 1",
+      },
+      y: {
+        field: "name_y",
+        type: "quantitative",
+        scale: { zero: false },
+        title: "MDS 2",
+      },
+      opacity: {
+        condition: {
+          test: "datum._selected === true || datum._inCart === true || !datum._hasSelection",
+          value: 1,
+        },
+        value: 0.25,
+      },
+      color: {
+        condition: [
+          { test: "datum._selected === true", value: "#ef4444" },
+          { test: "datum._inCart === true", value: "#22c55e" },
+        ],
+        ...(spec.color
+          ? { field: spec.color, type: "nominal" }
+          : { value: "#38bdf8" }),
+      },
+      tooltip: [
+        { field: spec.field ?? "sample_code", type: "nominal" },
+        { field: "name_x", type: "quantitative", title: "MDS 1" },
+        { field: "name_y", type: "quantitative", title: "MDS 2" },
+      ],
+    },
     params: [
       {
         name: "click_sel",

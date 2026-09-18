@@ -3,11 +3,13 @@ import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Paper } from "@blueskyproject/finch";
 import { Selection } from "@phosphor-icons/react";
+import AssignSelectionBar from "../components/AssignSelectionBar";
 import CrateCard from "../components/CrateCard";
 import MarkerFilterBar, {
   type MarkerFilters,
 } from "../components/MarkerFilterBar";
 import PushToNotesButton from "../components/PushToNotesButton";
+import { useBookSearchSync } from "../lib/bookContext";
 import { addToCart, getCartIds, replaceCart, subscribeCart } from "../lib/crateCart";
 import {
   compareCratesByMarkers,
@@ -28,9 +30,12 @@ import {
   galleryGridStyle,
   resolveGallery,
 } from "../lib/schema";
+import { fetchPlacements } from "../lib/projectBookApi";
+import { filterOrganizeUniverse } from "../lib/organizeScope";
 import { fetchCrates, type CrateSummary } from "../lib/tiledCrates";
 
 export default function SelectionPage() {
+  const book = useBookSearchSync();
   const [selection, setSelection] = useState(getPlotSelection);
   const [cartCount, setCartCount] = useState(() => getCartIds().length);
   const [markerFilters, setMarkerFilters] = useState<MarkerFilters>({
@@ -66,6 +71,10 @@ export default function SelectionPage() {
     queryKey: ["crates"],
     queryFn: fetchCrates,
   });
+  const placementsQuery = useQuery({
+    queryKey: ["project-book-placements"],
+    queryFn: fetchPlacements,
+  });
 
   const gallery = dashQuery.data ? resolveGallery(dashQuery.data) : null;
 
@@ -77,13 +86,27 @@ export default function SelectionPage() {
     return map;
   }, [cratesQuery.data]);
 
+  const universeIds = useMemo(() => {
+    const scoped = filterOrganizeUniverse(
+      cratesQuery.data ?? [],
+      placementsQuery.data?.placements ?? [],
+      book,
+    );
+    return new Set(scoped.map((c) => c.id));
+  }, [cratesQuery.data, placementsQuery.data, book]);
+
+  const scopedIds = useMemo(
+    () => selection.ids.filter((id) => universeIds.has(id)),
+    [selection.ids, universeIds],
+  );
+
   const allItems = useMemo(
     () =>
-      selection.ids.map((id) => ({
+      scopedIds.map((id) => ({
         id,
         crate: cratesById.get(id) ?? { id, metadata: {} },
       })),
-    [selection.ids, cratesById],
+    [scopedIds, cratesById],
   );
 
   const filteredItems = useMemo(() => {
@@ -108,11 +131,11 @@ export default function SelectionPage() {
     markerFilters.sort !== "default";
 
   const selectionCountLabel =
-    selection.ids.length === 0
+    scopedIds.length === 0
       ? "(0)"
-      : filteredItems.length !== selection.ids.length
-        ? `(${filteredItems.length} of ${selection.ids.length})`
-        : `(${selection.ids.length})`;
+      : filteredItems.length !== scopedIds.length
+        ? `(${filteredItems.length} of ${scopedIds.length})`
+        : `(${scopedIds.length})`;
 
   return (
     <div className="flex flex-col gap-4 p-4 w-full min-h-0 overflow-auto">
@@ -120,14 +143,15 @@ export default function SelectionPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-100 inline-flex items-center gap-2">
             <Selection size={28} />
-            Plot selection
+            Organize selection
             <span className="text-base font-normal text-slate-400">
               {selectionCountLabel}
             </span>
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Datasets from plot brushing or lasso. Narrow by stars and color
-            tags, remove individual hits, then add to the action queue.
+            Crates in the current Organize scope that are also in the session
+            selection. Assign them to a project or subproject, or send them to
+            this project&apos;s action queue.
           </p>
           {selection.source && (
             <p className="text-xs text-slate-500 mt-1 font-mono">
@@ -136,10 +160,10 @@ export default function SelectionPage() {
           )}
         </div>
         <Link
-          to="/plots"
+          to="/organize"
           className="px-3 py-1.5 rounded-md bg-slate-700 text-slate-100 text-sm hover:bg-slate-600 no-underline"
         >
-          Back to plots
+          Back to Organize
         </Link>
       </div>
 
@@ -151,9 +175,9 @@ export default function SelectionPage() {
             onClick={() => addToCart(filteredIds)}
             className="px-3 py-1.5 rounded-md bg-sky-700 text-slate-100 text-sm hover:bg-sky-600 disabled:opacity-40"
           >
-            {markerFilterActive && filteredIds.length !== selection.ids.length
-              ? `Add ${filteredIds.length} to action queue`
-              : "Add to action queue"}
+            {markerFilterActive && filteredIds.length !== scopedIds.length
+              ? `Add ${filteredIds.length} to this project's queue`
+              : "Add to this project's queue"}
           </button>
           <button
             type="button"
@@ -161,13 +185,13 @@ export default function SelectionPage() {
             onClick={() => replaceCart(filteredIds)}
             className="px-3 py-1.5 rounded-md bg-slate-700 text-slate-100 text-sm hover:bg-slate-600 disabled:opacity-40"
           >
-            {markerFilterActive && filteredIds.length !== selection.ids.length
-              ? `Replace action queue (${filteredIds.length})`
-              : "Replace action queue"}
+            {markerFilterActive && filteredIds.length !== scopedIds.length
+              ? `Replace queue (${filteredIds.length})`
+              : "Replace this project's queue"}
           </button>
           <button
             type="button"
-            disabled={selection.ids.length === 0}
+            disabled={scopedIds.length === 0}
             onClick={() => clearPlotSelection()}
             className="px-3 py-1.5 rounded-md bg-slate-800 text-slate-300 text-sm hover:bg-slate-700 disabled:opacity-40"
           >
@@ -191,19 +215,24 @@ export default function SelectionPage() {
             label="Push to notes"
           />
         </div>
-        {selection.ids.length === 0 && (
+        <AssignSelectionBar crateIds={filteredIds} projectId={book.projectId} />
+        {scopedIds.length === 0 && (
           <p className="text-sm text-slate-400">
-            No active selection. On{" "}
-            <Link to="/plots" className="text-sky-400 hover:underline">
-              Plots
+            No crates in both the Organize scope and the session selection. On{" "}
+            <Link to="/organize" className="text-sky-400 hover:underline">
+              Organize
             </Link>
-            , expand a chart and brush or lasso datasets — the selection appears
-            here. Then add to the action queue and export from the Workflow tabs.
+            , set inbox / project / all, then brush or lasso. Or pick a project
+            on{" "}
+            <Link to="/" className="text-sky-400 hover:underline">
+              Data &amp; Projects
+            </Link>
+            .
           </p>
         )}
       </Paper>
 
-      {selection.ids.length > 0 && (
+      {scopedIds.length > 0 && (
         <MarkerFilterBar
           filters={markerFilters}
           onChange={setMarkerFilters}
@@ -211,9 +240,9 @@ export default function SelectionPage() {
         />
       )}
 
-      {selection.ids.length > 0 && markerFilterActive && (
+      {scopedIds.length > 0 && markerFilterActive && (
         <p className="text-xs text-slate-500">
-          Showing {filteredItems.length} of {selection.ids.length} in selection
+          Showing {filteredItems.length} of {scopedIds.length} in selection
           {filteredItems.length === 0 ? " — try relaxing marker filters" : ""}
         </p>
       )}
@@ -247,7 +276,7 @@ export default function SelectionPage() {
         </div>
       )}
 
-      {gallery && selection.ids.length > 0 && filteredItems.length === 0 && (
+      {gallery && scopedIds.length > 0 && filteredItems.length === 0 && (
         <Paper className="p-6 text-slate-400 text-sm">
           No datasets in the current selection match these marker filters.
         </Paper>

@@ -47,6 +47,10 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path: string) => path.replace(/^\/agent/, ""),
         },
+        "/api/v1/project-book": {
+          target: tiledOrigin,
+          changeOrigin: true,
+        },
       },
     },
     resolve: {

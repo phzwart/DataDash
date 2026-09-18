@@ -31,12 +31,21 @@ import {
   buildAgentJobRequest,
   resolveSharedFields,
 } from "../lib/agentRequest";
+import { useBookSearchSync } from "../lib/bookContext";
 import {
+  addToCart,
   clearCart,
   getCartIds,
   removeFromCart,
+  replaceCart,
   subscribeCart,
 } from "../lib/crateCart";
+import { getPlotSelection, subscribePlotSelection } from "../lib/plotSelection";
+import {
+  fetchPlacements,
+  fetchProject,
+} from "../lib/projectBookApi";
+import { filterOrganizeUniverse, workflowFocusIds } from "../lib/organizeScope";
 import { resolveDashboardUri } from "../lib/dashboardConfig";
 import { getFacilityUrl } from "../lib/facilityApi";
 import {
@@ -66,6 +75,7 @@ type BulkResult = {
 };
 
 export default function CartPage() {
+  const book = useBookSearchSync();
   const queryClient = useQueryClient();
   const agentUrl = getAgentUrl();
   const [cartIds, setCartIds] = useState(() => getCartIds());
@@ -82,6 +92,12 @@ export default function CartPage() {
   const [draftText, setDraftText] = useState<Record<string, string>>({});
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
   const [bulkResults, setBulkResults] = useState<BulkResult[]>([]);
+  const [selectionTick, setSelectionTick] = useState(0);
+
+  useEffect(
+    () => subscribePlotSelection(() => setSelectionTick((n) => n + 1)),
+    [],
+  );
 
   useEffect(() => {
     return subscribeCart(() => {
@@ -120,6 +136,15 @@ export default function CartPage() {
   const cratesQuery = useQuery({
     queryKey: ["crates"],
     queryFn: fetchCrates,
+  });
+  const placementsQuery = useQuery({
+    queryKey: ["project-book-placements"],
+    queryFn: fetchPlacements,
+  });
+  const projectQuery = useQuery({
+    queryKey: ["project-book-project", book.projectId],
+    queryFn: () => fetchProject(book.projectId!),
+    enabled: Boolean(book.projectId),
   });
 
   const healthQuery = useQuery({
@@ -204,7 +229,7 @@ export default function CartPage() {
       setStoreMessage(
         errs > 0
           ? `Stored ${n} experiment(s) on the local Tiled server with ${errs} error(s)${regNote}.`
-          : `Stored ${n} experiment(s) on the local Tiled server${regNote}. Open Data Overview or Plots.`,
+          : `Stored ${n} experiment(s) on the local Tiled server${regNote}. Open Data & Projects or Organize.`,
       );
       void queryClient.invalidateQueries({ queryKey: ["crates"] });
     },
@@ -337,6 +362,45 @@ export default function CartPage() {
     },
   });
 
+  const universe = useMemo(
+    () =>
+      filterOrganizeUniverse(
+        cratesQuery.data ?? [],
+        placementsQuery.data?.placements ?? [],
+        book,
+      ),
+    [cratesQuery.data, placementsQuery.data, book],
+  );
+  const projectIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of placementsQuery.data?.placements ?? []) {
+      if (p.project_id === book.projectId) ids.add(p.crate_uuid);
+    }
+    return ids;
+  }, [placementsQuery.data, book.projectId]);
+  const selectedSub = projectQuery.data?.subprojects.find(
+    (s) => s.id === book.subId,
+  );
+  const focus = useMemo(
+    () =>
+      workflowFocusIds({
+        universeIds: universe.map((c) => c.id),
+        selectionIds: getPlotSelection().ids,
+        sub: selectedSub,
+        projectId: book.projectId,
+        projectIds,
+      }),
+    [universe, selectedSub, book.projectId, projectIds, selectionTick],
+  );
+  const focusLabel =
+    focus.reason === "selection"
+      ? "current Organize selection"
+      : focus.reason === "subproject"
+        ? `subproject ${selectedSub?.title ?? ""}`
+        : focus.reason === "project"
+          ? `project ${projectQuery.data?.title ?? ""}`
+          : "";
+
   const items = cartIds.map((id) => ({
     id,
     crate: cratesById.get(id) ?? { id, metadata: {} },
@@ -395,8 +459,12 @@ export default function CartPage() {
             </span>
           </h1>
           <p className="mt-1 text-sm text-slate-400">
-            Pick an action, set shared parameters, mark crates as inputs, then
-            submit jobs in bulk.{" "}
+            Queue is project-directed: load the current project, subproject, or
+            Organize selection, then run actions. Facility Pull stays on{" "}
+            <Link to="/search" className="text-sky-400 hover:underline">
+              Search
+            </Link>
+            .{" "}
             <span className="text-slate-500">
               {hydratedCount}/{cartIds.length} stored locally
             </span>
@@ -435,6 +503,16 @@ export default function CartPage() {
             })}
             label="Push to notes"
           />
+          <button
+            type="button"
+            disabled={focus.ids.length === 0}
+            onClick={() => replaceCart(focus.ids)}
+            className="rounded-md bg-slate-700 px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-600 disabled:opacity-40"
+          >
+            {focus.ids.length
+              ? `Load ${focus.ids.length} from ${focusLabel || "project"}`
+              : "Load project crates"}
+          </button>
           <button
             type="button"
             disabled={cartIds.length === 0}
@@ -622,12 +700,35 @@ export default function CartPage() {
       ) : null}
 
       {cartIds.length === 0 && (
-        <Paper className="bg-slate-900/70 p-6 text-sm text-slate-400">
-          Action queue is empty. On{" "}
-          <Link to="/plots" className="text-sky-400 hover:underline">
-            Plots
-          </Link>
-          , brush or lasso datasets and add them here.
+        <Paper className="bg-slate-900/70 p-6 text-sm text-slate-400 space-y-3">
+          {book.projectId ? (
+            <p>
+              {focus.ids.length
+                ? `Action queue is empty. Load ${focus.ids.length} crate${focus.ids.length === 1 ? "" : "s"} from ${focusLabel || "this project"}, or brush on `
+                : "Action queue is empty. Brush on "}
+              <Link to="/organize" className="text-sky-400 hover:underline">
+                Organize
+              </Link>
+              .
+            </p>
+          ) : (
+            <p>
+              Select a project on{" "}
+              <Link to="/" className="text-sky-400 hover:underline">
+                Data &amp; Projects
+              </Link>{" "}
+              or Organize first.
+            </p>
+          )}
+          {focus.ids.length > 0 && (
+            <button
+              type="button"
+              onClick={() => addToCart(focus.ids)}
+              className="rounded-md bg-sky-800 px-3 py-1.5 text-sm text-sky-50 hover:bg-sky-700"
+            >
+              Load {focus.ids.length} from {focusLabel}
+            </button>
+          )}
         </Paper>
       )}
 

@@ -227,7 +227,7 @@ export default function CrateDetailPage() {
   const backLabel =
     typeof returnState?.backLabel === "string"
       ? returnState.backLabel
-      : "Data overview";
+      : "Data & Projects";
 
   const crateQuery = useQuery({
     queryKey: ["crate", uuid],

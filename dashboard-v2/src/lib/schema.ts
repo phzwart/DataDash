@@ -13,6 +13,7 @@ export type LinkmlSlot = {
   range?: string;
   title?: string;
   description?: string;
+  required?: boolean;
   multivalued?: boolean;
   identifier?: boolean;
   pattern?: string;
@@ -134,6 +135,16 @@ export type VegaPlotSpec = PlotLayoutSpec & {
   selection?: VegaSelectionBinding;
 };
 
+/** Sample-code (or other string) similarity scatter: distance + MDS. */
+export type AffinityPlotSpec = PlotLayoutSpec & {
+  title?: string;
+  /** Metadata string slot (default sample_code). */
+  field?: string;
+  color?: string;
+  caption?: string;
+  selection?: VegaSelectionBinding;
+};
+
 export type ThreeUnitCellFields = {
   a?: string;
   b?: string;
@@ -157,7 +168,8 @@ export type PlotRowPanel =
   | ({ type: "three" } & ThreePlotSpec)
   | ({ type: "scatter" } & ScatterPlotSpec)
   | ({ type: "histogram" } & HistogramPlotSpec)
-  | ({ type: "categorical" } & CategoricalPlotSpec);
+  | ({ type: "categorical" } & CategoricalPlotSpec)
+  | ({ type: "affinity" } & AffinityPlotSpec);
 
 /** Always-visible horizontal band of panels (table + plots). */
 export type PlotRowSpec = {
@@ -401,7 +413,15 @@ export type ParsedSchema = {
   name?: string;
   title?: string;
   description?: string;
-  classes: Record<string, { description?: string; slots?: string[] }>;
+  classes: Record<
+    string,
+    {
+      description?: string;
+      slots?: string[];
+      is_a?: string;
+      abstract?: boolean;
+    }
+  >;
   slots: Record<string, LinkmlSlot>;
   enums: Record<
     string,

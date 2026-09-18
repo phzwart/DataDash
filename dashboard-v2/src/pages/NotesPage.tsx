@@ -293,7 +293,7 @@ export default function NotesPage() {
       <ul className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0 bg-sky-50">
         {entries.length === 0 ? (
           <li className="text-xs text-slate-500 py-8 text-center">
-            Session is empty. Select on Plots, use cart, Push a crate, or type a
+            Session is empty. Select on Organize, use cart, Push a crate, or type a
             note.
           </li>
         ) : (

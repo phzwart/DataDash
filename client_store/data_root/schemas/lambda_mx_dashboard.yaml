@@ -520,6 +520,19 @@ plots:
                 - { field: unit_cell_b, type: quantitative }
                 - { field: unit_cell_c, type: quantitative }
             params: []
+    - id: sample_affinity
+      title: Sample codes
+      panels:
+        - type: affinity
+          title: Sample-code similarity
+          field: sample_code
+          color: space_group
+          caption: Nearby points have similar sample codes (string distance, MDS).
+          width_fraction: 1
+          aspect_ratio: 1.2
+          selection:
+            mode: lasso
+            id_field: id
   histograms:
     - slot: resolution
       aspect_ratio: 1.6

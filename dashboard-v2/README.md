@@ -1,13 +1,13 @@
 # Dashboard v2
 
-Facility **search → cart → Pull (local Tiled) → Overview / Plots**.
+Facility **search → Data & Projects → Organize → Workflow**.
 
 Copied from [`../dashboard`](../dashboard) and rewired so:
 
 1. **Search** hits the remote facility (`GET /api/v1/search`)
 2. Hits go into a **cart** (UUID list)
 3. **Pull** asks [`../client_store`](../client_store) to download RO-Crates + sidecars and register them in a **local Tiled** catalog
-4. **Data Overview / Plots / Detail** read that local Tiled only
+4. **Data & Projects / Organize / Detail** read that local Tiled only
 
 Legacy [`../dashboard`](../dashboard) is unchanged (Tiled-first gallery).
 
@@ -35,7 +35,7 @@ npm install
 npm run dev            # http://127.0.0.1:5175
 ```
 
-Flow: **Search** → add to cart → **Workflow → Cart → Pull into local Tiled** → **Data Overview / Plots**.
+Flow: **Search** → store locally → **Data & Projects** (inbox / ledger) → **Organize** (scope + select) → **Workflow**.
 
 ## Env
 

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Navigate, useParams } from "react-router";
 import {
   FinchHeader,
   FinchMainContent,
@@ -40,15 +41,15 @@ const navRoutes: RouteItem[] = [
   },
   {
     path: "/",
-    label: "Data Overview",
+    label: "Data & Projects",
     element: <CratesPage />,
     icon: <SquaresFour size={28} />,
     isBackgroundTransparent: true,
     showPageTitle: false,
   },
   {
-    path: "/plots",
-    label: "Plots",
+    path: "/organize",
+    label: "Organize",
     element: <PlotsPage />,
     icon: <ChartBar size={28} />,
     isBackgroundTransparent: true,
@@ -88,8 +89,30 @@ const navRoutes: RouteItem[] = [
   },
 ];
 
+function ProjectBookRedirect() {
+  const { projectId, subId } = useParams();
+  const q = new URLSearchParams();
+  if (projectId) q.set("project", projectId);
+  if (subId) q.set("sub", subId);
+  return <Navigate to={q.toString() ? `/?${q}` : "/"} replace />;
+}
+
 /** Reachable pages kept out of the sidebar (deep links, popups, legacy URLs). */
 const hiddenRoutes: RouteItem[] = [
+  {
+    path: "/projects/:projectId/sub/:subId",
+    label: "Subproject",
+    element: <ProjectBookRedirect />,
+    isBackgroundTransparent: true,
+    showPageTitle: false,
+  },
+  {
+    path: "/projects/:projectId",
+    label: "Project",
+    element: <ProjectBookRedirect />,
+    isBackgroundTransparent: true,
+    showPageTitle: false,
+  },
   {
     path: "/crates/:uuid",
     label: "Crate",
@@ -118,6 +141,12 @@ const hiddenRoutes: RouteItem[] = [
     path: "/browse",
     label: "Tiled",
     element: <RouteRedirect to="/setup#catalog-browser" />,
+    isBackgroundTransparent: true,
+  },
+  {
+    path: "/plots",
+    label: "Organize",
+    element: <RouteRedirect to="/organize" />,
     isBackgroundTransparent: true,
   },
   {

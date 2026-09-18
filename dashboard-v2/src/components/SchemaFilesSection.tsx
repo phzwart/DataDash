@@ -33,6 +33,8 @@ export default function SchemaFilesSection({
   const schemaUri = dashConfigQuery.data?.schema_uri;
   const collectionUri = collectionDraft?.trim() || coll.uri;
   const seriesSchemaUri = `${getTiledOrigin()}/schemas/lambda_mx_series.yaml`;
+  const bookSchemaUri = `${getTiledOrigin()}/schemas/lambda_project_book.yaml`;
+  const bookDashUri = `${getTiledOrigin()}/schemas/lambda_project_book_dashboard.yaml`;
 
   return (
     <div className="space-y-3">
@@ -46,6 +48,14 @@ export default function SchemaFilesSection({
         title={`Collection YAML${!collectionUri ? " (none active)" : ""}`}
       />
       <YamlInspector uri={seriesSchemaUri} title="Lambda MX series (LinkML)" />
+      <YamlInspector
+        uri={bookSchemaUri}
+        title="Project Book LinkML (developer)"
+      />
+      <YamlInspector
+        uri={bookDashUri}
+        title="Project Book dashboard YAML (developer)"
+      />
       {collectionDraft?.trim() ? (
         <YamlInspector
           uri={collectionDraft.trim()}
