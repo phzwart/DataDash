@@ -43,17 +43,47 @@ function asRecord(value: unknown): CrateMetadata {
     : {};
 }
 
-export async function fetchAllCrates(): Promise<CrateSummary[]> {
-  const result = await Tiled.getFirstSearchWithApiKey(
-    getTiledApiKey(),
-    "crates",
-    getTiledApiUrl(),
-  );
-  if (!result?.data) return [];
-  const crates = result.data.map((item: TiledSearchItem<unknown>) => ({
+const SEARCH_PAGE = 200;
+const SEARCH_PAGE_CAP = 50;
+
+function toCrate(item: TiledSearchItem<unknown>): CrateSummary {
+  return {
     id: item.id,
     metadata: asRecord(item.attributes?.metadata),
-  }));
+  };
+}
+
+/** Walk Tiled /search/crates pages — getFirstSearch only returns the first 100. */
+async function fetchCrateSearchPages(): Promise<CrateSummary[]> {
+  const key = getTiledApiKey();
+  const headers: HeadersInit = key ? { Authorization: `Apikey ${key}` } : {};
+  let url: string | null =
+    `${getTiledApiUrl()}/search/crates?page[limit]=${SEARCH_PAGE}`;
+  const crates: CrateSummary[] = [];
+  const seen = new Set<string>();
+
+  for (let page = 0; page < SEARCH_PAGE_CAP && url; page += 1) {
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      throw new Error(`Tiled crate search failed (${res.status})`);
+    }
+    const body = (await res.json()) as {
+      data?: TiledSearchItem<unknown>[];
+      links?: { next?: string | null };
+    };
+    for (const item of body.data ?? []) {
+      if (!item?.id || seen.has(item.id)) continue;
+      seen.add(item.id);
+      crates.push(toCrate(item));
+    }
+    const next = body.links?.next;
+    url = typeof next === "string" && next.trim() ? next.trim() : null;
+  }
+  return crates;
+}
+
+export async function fetchAllCrates(): Promise<CrateSummary[]> {
+  const crates = await fetchCrateSearchPages();
   syncMarkerStoreFromCrates(crates);
   return crates;
 }

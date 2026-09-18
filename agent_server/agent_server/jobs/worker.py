@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -27,6 +27,19 @@ from agent_server.output.validate import (
 from agent_server.registry.loader import AgentRegistry
 from agent_server.workspace.manager import WorkspaceManager
 from rocrate_tiled.metadata import CRATE_FILENAME
+
+log = logging.getLogger(__name__)
+
+
+def _tail_log(path: Path, *, limit: int = 400) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+    text = " ".join(text.split())
+    if len(text) > limit:
+        return text[-limit:]
+    return text
 
 
 class JobWorker:
@@ -50,6 +63,9 @@ class JobWorker:
             local_crate_roots=config.ingest.local_crate_roots,
             crate_source_urls=config.ingest.crate_source_urls,
         )
+        self.max_parallel = max(1, int(config.jobs.max_parallel))
+        self._queue: asyncio.Queue[str] | None = None
+        self._slots_started = False
 
     def _set_status(
         self,
@@ -84,36 +100,59 @@ class JobWorker:
             },
         )
 
+    def queued_count(self) -> int:
+        if self._queue is None:
+            return 0
+        return int(self._queue.qsize())
+
+    def start_pool(self) -> None:
+        """Bind the run-queue slot workers to the current event loop."""
+        if self._slots_started:
+            return
+        self._queue = asyncio.Queue()
+        self._slots_started = True
+        for i in range(self.max_parallel):
+            asyncio.create_task(self._slot_loop(), name=f"job-slot-{i}")
+        log.info("Job run queue started with max_parallel=%s", self.max_parallel)
+
+    async def _slot_loop(self) -> None:
+        assert self._queue is not None
+        while True:
+            job_uuid = await self._queue.get()
+            try:
+                job = self.store.get_job(job_uuid)
+                if job is None:
+                    continue
+                status = JobStatus(job.status)
+                if status.is_terminal:
+                    continue
+                await self._run(job_uuid)
+            except Exception:
+                log.exception("Queued job %s failed", job_uuid)
+            finally:
+                self._queue.task_done()
+
     async def submit(self, job_uuid: str) -> None:
-        """Run job pipeline (await until complete)."""
+        """Run job pipeline now (tests / blocking API). Does not wait in the queue."""
         await self._run(job_uuid)
 
     def schedule(self, job_uuid: str) -> None:
-        """Fire-and-forget wrapper for BackgroundTasks."""
-        import asyncio
-        import logging
-
-        log = logging.getLogger(__name__)
-
+        """Enqueue for a free run slot. Extra jobs stay pending until a slot opens."""
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             asyncio.run(self._run(job_uuid))
             return
 
-        task = loop.create_task(self._run(job_uuid))
-
-        def _done(t: asyncio.Task[None]) -> None:
-            try:
-                t.result()
-            except Exception:
-                log.exception("Background job %s failed", job_uuid)
-
-        task.add_done_callback(_done)
+        self.start_pool()
+        assert self._queue is not None
+        self._queue.put_nowait(job_uuid)
 
     async def _run(self, job_uuid: str) -> None:
         job = self.store.get_job(job_uuid)
         if job is None:
+            return
+        if JobStatus(job.status).is_terminal or self._cancelled(job_uuid):
             return
         workspace = Path(job.workspace_path)
         try:
@@ -163,7 +202,11 @@ class JobWorker:
             if self._cancelled(job_uuid):
                 return
             if exit_code != 0:
-                raise RuntimeError(f"Agent exited with code {exit_code}")
+                detail = _tail_log(workspace / "logs" / "stderr.log")
+                raise RuntimeError(
+                    f"Agent exited with code {exit_code}"
+                    + (f": {detail}" if detail else "")
+                )
 
             self._set_status(job_uuid, status=JobStatus.VALIDATING, phase="rocrate_validation")
             output_dir = self.workspace.output_dir(workspace, agent.output.root_dir)

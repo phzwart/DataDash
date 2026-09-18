@@ -161,18 +161,18 @@ export function affinityToVegaSpec(spec: AffinityPlotSpec): VisualizationSpec {
   return {
     $schema: "https://vega.github.io/schema/vega-lite/v5.json",
     title: spec.title,
-    mark: { type: "point", filled: true, size: 80 },
+    mark: { type: "point", filled: true, size: 55 },
     encoding: {
       x: {
         field: "name_x",
         type: "quantitative",
-        scale: { zero: false },
+        scale: { zero: false, nice: false },
         title: "MDS 1",
       },
       y: {
         field: "name_y",
         type: "quantitative",
-        scale: { zero: false },
+        scale: { zero: false, nice: false },
         title: "MDS 2",
       },
       opacity: {
@@ -542,6 +542,60 @@ export function pointInPolygon(
     if (intersect) inside = !inside;
   }
   return inside;
+}
+
+const CELL_SPLOM_FIELDS = ["a", "b", "c"] as const;
+
+/** Cell-length SPLOM (a, b, c); color by resolution (Å), reversed so lower is better. */
+export function cellSplomToVegaSpec(): VisualizationSpec {
+  const fields = [...CELL_SPLOM_FIELDS];
+  return {
+    $schema: "https://vega.github.io/schema/vega-lite/v5.json",
+    config: DARK,
+    transform: [
+      { calculate: "datum.unit_cell_a", as: "a" },
+      { calculate: "datum.unit_cell_b", as: "b" },
+      { calculate: "datum.unit_cell_c", as: "c" },
+    ],
+    repeat: {
+      row: fields,
+      column: fields,
+    },
+    spec: {
+      width: 180,
+      height: 180,
+      mark: { type: "circle", filled: true, size: 70, opacity: 0.85 },
+      encoding: {
+        x: {
+          field: { repeat: "column" },
+          type: "quantitative",
+          scale: { zero: false, padding: 8 },
+          axis: { titleFontSize: 13, labelFontSize: 10, tickCount: 4 },
+        },
+        y: {
+          field: { repeat: "row" },
+          type: "quantitative",
+          scale: { zero: false, padding: 8 },
+          axis: { titleFontSize: 13, labelFontSize: 10, tickCount: 4 },
+        },
+        color: {
+          field: "resolution",
+          type: "quantitative",
+          title: "Resolution (Å)",
+          scale: { scheme: "viridis", reverse: true },
+          legend: { orient: "bottom", direction: "horizontal" },
+        },
+        tooltip: [
+          { field: "sample_code", type: "nominal", title: "Sample" },
+          { field: "space_group", type: "nominal", title: "SG" },
+          { field: "a", type: "quantitative", format: ".2f", title: "a (Å)" },
+          { field: "b", type: "quantitative", format: ".2f", title: "b (Å)" },
+          { field: "c", type: "quantitative", format: ".2f", title: "c (Å)" },
+          { field: "resolution", type: "quantitative", format: ".2f", title: "Resolution (Å)" },
+        ],
+      },
+    },
+  } as VisualizationSpec;
 }
 
 export function scatterFieldsFromSpec(

@@ -77,6 +77,7 @@ def build_app(config: AppConfig) -> FastAPI:
     async def lifespan(app: FastAPI):
         config.jobs_root.mkdir(parents=True, exist_ok=True)
         config.agent_data_root.mkdir(parents=True, exist_ok=True)
+        worker.start_pool()
         yield
 
     app = FastAPI(title="lambda-agent-server", lifespan=lifespan)
@@ -105,6 +106,8 @@ def build_app(config: AppConfig) -> FastAPI:
                 "status": "ok",
                 "role": "agent_server",
                 "agents": len(registry.list()),
+                "max_parallel": worker.max_parallel,
+                "jobs_queued": worker.queued_count(),
                 **counts,
             }
         )

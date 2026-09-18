@@ -6,11 +6,11 @@
 #
 # On startup the server:
 #   1. Indexes DATA_ROOT/{uuid}/ into facility_index.db (LAMBDA /api/v1/search)
-#   2. Registers RO-Crate File nodes in Tiled at /crates/{uuid}/assets/
+#   2. Registers crate metadata in Tiled at /crates/{uuid} (query front-end only;
+#      File payloads are not ingested — use /api/v1/experiments/... HTTP routes)
 #
 # Tiled tree:
-#   /crates/{uuid}                 metadata container
-#   /crates/{uuid}/assets/{key}    external bytes for each RO-Crate File node
+#   /crates/{uuid}                 metadata container (no file transport)
 #
 # MyROCrates list processing products via absolute File @ids under beamline
 # storage. Those roots must appear in readable_storage (do not copy payloads).

@@ -529,7 +529,7 @@ plots:
           color: space_group
           caption: Nearby points have similar sample codes (string distance, MDS).
           width_fraction: 1
-          aspect_ratio: 1.2
+          aspect_ratio: 2.6
           selection:
             mode: lasso
             id_field: id

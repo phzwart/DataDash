@@ -78,6 +78,7 @@ export default function VegaLiteView({
   crates,
   layout,
   fill = false,
+  maxHeight,
   sourceId,
   onSelectionChange,
   compiledSpec,
@@ -86,6 +87,8 @@ export default function VegaLiteView({
   crates: CrateLike[];
   layout: ResolvedPlotLayout;
   fill?: boolean;
+  /** Cap computed height so a full-width scatter stays glanceable. */
+  maxHeight?: number;
   sourceId: string;
   onSelectionChange: (source: string, ids: string[]) => void;
   compiledSpec?: VisualizationSpec;
@@ -169,7 +172,11 @@ export default function VegaLiteView({
         minW,
         Math.round(fill ? avail : avail * layout.widthFraction),
       );
-      const h = Math.max(minH, Math.round(w / layout.aspectRatio));
+      const rawH = Math.max(minH, Math.round(w / layout.aspectRatio));
+      const h =
+        maxHeight != null && maxHeight > 0
+          ? Math.max(minH, Math.min(rawH, Math.round(maxHeight)))
+          : rawH;
       setSize((prev) =>
         prev.width === w && prev.height === h ? prev : { width: w, height: h },
       );
@@ -179,7 +186,7 @@ export default function VegaLiteView({
     if (el.parentElement) ro.observe(el.parentElement);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [layout.widthFraction, layout.aspectRatio, fill]);
+  }, [layout.widthFraction, layout.aspectRatio, fill, maxHeight]);
 
   const selectionMode = useMemo(() => {
     if (!rawSpec) return "interval" as const;
@@ -196,14 +203,26 @@ export default function VegaLiteView({
       height: size.height - 24,
       title: panel?.title,
       selectionMode,
-      domainPad: 0.1,
+      domainPad: maxHeight != null ? 0.04 : 0.1,
     }) as VisualizationSpec;
-  }, [rawSpec, rowsForSpec, size, panel?.title, selectionMode]);
+  }, [rawSpec, rowsForSpec, size, panel?.title, selectionMode, maxHeight]);
 
   const onEmbed = (result: Result) => {
     viewRef.current = result.view;
     setViewEpoch((n) => n + 1);
   };
+
+  // Wheel zoom must not scroll the Organize page. Vega's `wheel!` does not
+  // preventDefault when the listener is passive (browser default).
+  useEffect(() => {
+    const el = chartWrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => el.removeEventListener("wheel", onWheel, { capture: true });
+  }, [spec, size.width, size.height]);
 
   // Attach interval/point selection listeners whenever the Vega view is ready.
   useEffect(() => {
@@ -453,7 +472,7 @@ export default function VegaLiteView({
       {selectionMode === "lasso" ? (
         <p className="text-[10px] text-slate-400 mb-1">
           Drag to lasso · scroll to zoom · Shift-drag to pan · red = selection ·
-          green = action queue
+          green = Work set
         </p>
       ) : null}
       {spec && size.width > 0 ? (
@@ -463,7 +482,8 @@ export default function VegaLiteView({
           style={{
             width: size.width,
             minHeight: size.height,
-            touchAction: selectionMode === "lasso" ? "none" : undefined,
+            touchAction: "none",
+            overscrollBehavior: "contain",
             cursor: selectionMode === "lasso" ? "crosshair" : undefined,
           }}
           onPointerDown={selectionMode === "lasso" ? onPointerDown : undefined}

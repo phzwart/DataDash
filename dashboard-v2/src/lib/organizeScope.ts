@@ -105,6 +105,21 @@ export function projectCrateIds(
   return ids;
 }
 
+/** Crates to run on Work: the selected subproject, or the whole project. */
+export function projectWorkIds(
+  sub: Subproject | undefined,
+  projectIds: Set<string>,
+): { ids: string[]; reason: "subproject" | "project" | "empty" } {
+  if (sub) {
+    const ids = sub.crate_uuids.filter((id) => projectIds.has(id));
+    return { ids, reason: ids.length ? "subproject" : "empty" };
+  }
+  if (projectIds.size) {
+    return { ids: [...projectIds], reason: "project" };
+  }
+  return { ids: [], reason: "empty" };
+}
+
 export function workflowFocusIds(opts: {
   universeIds: string[];
   selectionIds: string[];

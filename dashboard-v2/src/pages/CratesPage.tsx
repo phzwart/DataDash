@@ -47,7 +47,13 @@ import {
   resolveGallery,
   type ParsedSchema,
 } from "../lib/schema";
-import { readBookContext, writeBookContext } from "../lib/bookContext";
+import {
+  readBookContext,
+  useBookContext,
+  writeBookContext,
+  type OrganizeScope,
+} from "../lib/bookContext";
+import { scopeLabel } from "../lib/organizeScope";
 import { fetchCrates } from "../lib/tiledCrates";
 import {
   getTiledApiKey,
@@ -63,16 +69,25 @@ function useBookSchema() {
 }
 
 export default function CratesPage() {
+  const [book, setBook] = useBookContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const projectId = searchParams.get("project") ?? undefined;
   const subId = searchParams.get("sub") ?? undefined;
 
   function selectProject(id: string, sub?: string) {
-    writeBookContext({ projectId: id, subId: sub ?? null });
+    writeBookContext({
+      projectId: id,
+      subId: sub ?? null,
+      scope: "project",
+    });
     const next = new URLSearchParams();
     next.set("project", id);
     if (sub) next.set("sub", sub);
     setSearchParams(next, { replace: true });
+  }
+
+  function selectScope(scope: OrganizeScope) {
+    setBook({ scope });
   }
   const qc = useQueryClient();
   const [filter, setFilter] = useState("");
@@ -150,10 +165,6 @@ export default function CratesPage() {
     return map;
   }, [placementsQuery.data]);
 
-  const inbox = useMemo(() => {
-    return (cratesQuery.data ?? []).filter((c) => !filed.has(c.id));
-  }, [cratesQuery.data, filed]);
-
   useEffect(() => {
     if (projectId) {
       writeBookContext({ projectId, subId: subId ?? null });
@@ -184,10 +195,29 @@ export default function CratesPage() {
       ? findUnsortedSubproject(projectQuery.data, defaultSubTitle)
       : undefined);
 
+  const projectCrateIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of placementsQuery.data?.placements ?? []) {
+      if (p.project_id === projectId) ids.add(p.crate_uuid);
+    }
+    return ids;
+  }, [placementsQuery.data, projectId]);
+
   const paneCrates = useMemo(() => {
     const all = cratesQuery.data ?? [];
-    const ids = new Set(selectedSub?.crate_uuids ?? []);
-    let rows = selectedSub ? all.filter((c) => ids.has(c.id)) : [];
+    let rows = all;
+    if (book.scope === "inbox") {
+      rows = all.filter((c) => !filed.has(c.id));
+    } else if (book.scope === "project") {
+      if (selectedSub) {
+        const ids = new Set(selectedSub.crate_uuids);
+        rows = all.filter((c) => ids.has(c.id));
+      } else if (projectId) {
+        rows = all.filter((c) => projectCrateIds.has(c.id));
+      } else {
+        rows = [];
+      }
+    }
     const store = getCrateMarkerStore();
     rows = filterCratesByMarkers(rows, markerFilters, store);
     const q = filter.trim().toLowerCase();
@@ -212,7 +242,11 @@ export default function CratesPage() {
     });
   }, [
     cratesQuery.data,
+    book.scope,
     selectedSub,
+    projectId,
+    projectCrateIds,
+    filed,
     markerFilters,
     filter,
     gallery,
@@ -255,8 +289,8 @@ export default function CratesPage() {
     onSuccess: invalidate,
   });
   const unfileMut = useMutation({
-    mutationFn: (crateId: string) =>
-      setSubprojectCrates(selectedSub!.id, { remove: [crateId] }),
+    mutationFn: ({ crateId, subId: fromSub }: { crateId: string; subId: string }) =>
+      setSubprojectCrates(fromSub, { remove: [crateId] }),
     onSuccess: invalidate,
   });
 
@@ -300,10 +334,9 @@ export default function CratesPage() {
             Data &amp; Projects
           </h1>
           <p className="text-base text-slate-400 max-w-3xl mt-2 leading-relaxed">
-            Facility search pulls crates into this store. Inbox crates are not
-            assigned to any project. File them into the selected project
-            (Unsorted unless a subproject is selected), then organize and run
-            workflow against that book.
+            Browse the local store (all crates, inbox, or one project). Inbox
+            means not assigned to any project. File into the selected project
+            (Unsorted unless a subproject is selected).
           </p>
         </div>
         <button
@@ -313,6 +346,38 @@ export default function CratesPage() {
         >
           {cratesQuery.isFetching ? "Refreshing…" : "Refresh crates"}
         </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs uppercase tracking-wide text-slate-500">
+          Show
+        </span>
+        {(["all", "inbox", "project"] as const).map((scope) => (
+          <button
+            key={scope}
+            type="button"
+            disabled={scope === "project" && !projectId}
+            onClick={() => selectScope(scope)}
+            className={`px-2.5 py-1 rounded-md text-sm ${
+              book.scope === scope
+                ? "bg-sky-800 text-sky-50"
+                : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+            } disabled:opacity-40`}
+          >
+            {scopeLabel(scope)}
+          </button>
+        ))}
+        <span className="text-xs text-slate-400 ml-1">
+          {book.scope === "all"
+            ? `${paneCrates.length} local`
+            : book.scope === "inbox"
+              ? `${paneCrates.length} unassigned`
+              : selectedSub
+                ? `${selectedSub.title} · ${paneCrates.length}`
+                : project
+                  ? `${project.title} · ${paneCrates.length}`
+                  : "Select a project"}
+        </span>
       </div>
 
       <div style={{ display: "grid", gap: bookLayout.form_gap }}>
@@ -367,12 +432,12 @@ export default function CratesPage() {
         </form>
       </div>
 
-      {!projectId && (
+      {book.scope === "project" && !projectId && (
         <Paper className="h-auto p-4 bg-slate-900/70 text-slate-300 text-sm space-y-2">
           <p>
-            Create a project to open the ledger (collaborators, sequences,
-            compounds, conditions) and the subproject tree. Crates not assigned
-            to any project stay in the inbox below.
+            Create or select a project to open the ledger, the subproject tree,
+            and that project&apos;s crates. Use All or Inbox to browse the store
+            without a project.
           </p>
           {sections.length > 0 && (
             <p className="text-xs text-slate-400">
@@ -383,7 +448,7 @@ export default function CratesPage() {
         </Paper>
       )}
 
-      {project && bookSchema && (
+      {project && bookSchema && book.scope === "project" && (
         <div className="min-h-0" style={{ display: "grid", gap: bookLayout.page_gap }}>
           <Paper
             className="h-auto min-w-0 bg-slate-900/70"
@@ -532,6 +597,9 @@ export default function CratesPage() {
               nodes={project.subprojects}
               selectedId={subId ?? null}
               onSelect={(id) => selectProject(project.id, id)}
+              projectTitle={project.title}
+              projectCrateCount={projectCrateIds.size}
+              onSelectProject={() => selectProject(project.id)}
               chipGap={bookLayout.chip_gap}
               itemsPerRow={bookLayout.items_per_row}
             />
@@ -578,8 +646,7 @@ export default function CratesPage() {
           </Paper>
 
           <div className="space-y-5 min-w-0">
-            {selectedSub ? (
-              <Paper
+            <Paper
                 className="h-auto bg-slate-900/70"
                 style={{
                   padding: bookLayout.paper_pad,
@@ -590,12 +657,14 @@ export default function CratesPage() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-xl font-semibold text-slate-100">
-                    {selectedSub.title}
+                    {selectedSub ? selectedSub.title : `All in ${project.title}`}
                   </h2>
                   <span className="text-sm text-slate-400">
-                    {selectedSub.crate_uuids.length} filed
+                    {paneCrates.length} crate{paneCrates.length === 1 ? "" : "s"}
                   </span>
                 </div>
+                {selectedSub ? (
+                  <>
                 <label
                   className="block space-y-2"
                   style={{ maxWidth: bookLayout.narrative_max_width }}
@@ -651,6 +720,13 @@ export default function CratesPage() {
                     />
                   )}
                 </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-500">
+                    All crates filed in this project. Pick a subproject to edit
+                    its narrative and ledger rows.
+                  </p>
+                )}
                 <div className="relative w-72 max-w-full">
                   <MagnifyingGlass
                     size={18}
@@ -659,7 +735,7 @@ export default function CratesPage() {
                   <input
                     value={filter}
                     onChange={(e) => setFilter(e.target.value)}
-                    placeholder="Filter filed crates…"
+                    placeholder="Filter crates…"
                     className="w-full pl-10 pr-3 py-2 rounded-md bg-slate-800 border border-slate-600 text-slate-100 text-base"
                   />
                 </div>
@@ -678,22 +754,36 @@ export default function CratesPage() {
                         schema={crateSchema}
                         to={`/crates/${crate.id}`}
                         state={{
-                          backTo: `/?project=${project.id}&sub=${selectedSub.id}`,
-                          backLabel: selectedSub.title,
+                          backTo: selectedSub
+                            ? `/?project=${project.id}&sub=${selectedSub.id}`
+                            : `/?project=${project.id}`,
+                          backLabel: selectedSub?.title ?? project.title,
                         }}
                         overlay={
-                          <button
-                            type="button"
-                            title="Unfile"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              unfileMut.mutate(crate.id);
-                            }}
-                            className="p-1 rounded bg-slate-900/80 text-rose-300"
-                          >
-                            <Trash size={14} />
-                          </button>
+                          filed.get(crate.id) ? (
+                            <span className="inline-flex items-center gap-1">
+                              <span className="px-1.5 py-0.5 rounded bg-slate-900/80 text-slate-300 text-[10px]">
+                                {filed.get(crate.id)?.title}
+                              </span>
+                              <button
+                                type="button"
+                                title="Unfile"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  const home = filed.get(crate.id);
+                                  if (!home) return;
+                                  unfileMut.mutate({
+                                    crateId: crate.id,
+                                    subId: home.subId,
+                                  });
+                                }}
+                                className="p-1 rounded bg-slate-900/80 text-rose-300"
+                              >
+                                <Trash size={14} />
+                              </button>
+                            </span>
+                          ) : null
                         }
                       />
                     ))}
@@ -701,39 +791,47 @@ export default function CratesPage() {
                 )}
                 {paneCrates.length === 0 && (
                   <p className="text-sm text-slate-500">
-                    No crates in this subproject. File from the inbox.
+                    {selectedSub
+                      ? "No crates in this subproject. File from Inbox."
+                      : "No crates in this project yet. Switch to Inbox to file some."}
                   </p>
                 )}
               </Paper>
-            ) : (
-              <Paper
-                className="h-auto bg-slate-900/70 text-slate-400 text-base"
-                style={{ padding: bookLayout.paper_pad }}
-              >
-                Select a subproject to see its narrative, assigned ledger rows,
-                and crates.
-              </Paper>
-            )}
           </div>
           </div>
         </div>
       )}
 
-      <InboxStrip
-        crates={inbox}
-        gallery={gallery}
-        schema={crateSchema}
-        canFile={Boolean(fileTarget)}
-        fileHint={
-          fileTarget
-            ? `File into ${projectQuery.data?.title ?? "project"} / ${fileTarget.title}`
-            : undefined
-        }
-        onFile={(id) => fileMut.mutate(id)}
-        busy={fileMut.isPending}
-        paperPad={bookLayout.paper_pad}
-        pageGap={bookLayout.page_gap}
-      />
+      {book.scope !== "project" && (
+        <DataGallery
+          title={
+            book.scope === "inbox"
+              ? "Inbox · not assigned to any project"
+              : "All local crates"
+          }
+          crates={paneCrates}
+          filed={filed}
+          gallery={gallery}
+          schema={crateSchema}
+          canFile={Boolean(fileTarget)}
+          fileHint={
+            fileTarget
+              ? `File inbox crates into ${projectQuery.data?.title ?? "project"} / ${fileTarget.title}`
+              : "Select a project to file inbox crates (Unsorted unless a subproject is selected)."
+          }
+          onFile={(id) => fileMut.mutate(id)}
+          onUnfile={(crateId, fromSub) =>
+            unfileMut.mutate({ crateId, subId: fromSub })
+          }
+          busy={fileMut.isPending || unfileMut.isPending}
+          filter={filter}
+          onFilter={setFilter}
+          markerFilters={markerFilters}
+          onMarkerFilters={setMarkerFilters}
+          paperPad={bookLayout.paper_pad}
+          pageGap={bookLayout.page_gap}
+        />
+      )}
 
       {cratesQuery.error && (
         <Paper className="h-auto p-4 bg-slate-900/70 text-rose-300 text-sm">
@@ -878,24 +976,38 @@ function AssignPicker({
   );
 }
 
-function InboxStrip({
+function DataGallery({
+  title,
   crates,
+  filed,
   gallery,
   schema,
   canFile,
   fileHint,
   onFile,
+  onUnfile,
   busy,
+  filter,
+  onFilter,
+  markerFilters,
+  onMarkerFilters,
   paperPad,
   pageGap,
 }: {
+  title: string;
   crates: import("../lib/tiledCrates").CrateSummary[];
+  filed: Map<string, { projectId: string; subId: string; title: string }>;
   gallery: ReturnType<typeof resolveGallery> | ReturnType<typeof defaultMxGallery> | null;
   schema?: ParsedSchema;
   canFile: boolean;
   fileHint?: string;
   onFile: (id: string) => void;
+  onUnfile: (crateId: string, subId: string) => void;
   busy: boolean;
+  filter: string;
+  onFilter: (value: string) => void;
+  markerFilters: MarkerFilters;
+  onMarkerFilters: (next: MarkerFilters) => void;
   paperPad: string;
   pageGap: string;
 }) {
@@ -910,57 +1022,88 @@ function InboxStrip({
       }}
     >
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-slate-100">
-          Inbox · not assigned to any project
-        </h2>
+        <h2 className="text-xl font-semibold text-slate-100">{title}</h2>
         <span className="text-sm text-slate-400">{crates.length}</span>
       </div>
-      {!canFile ? (
-        <p className="text-base text-slate-500">
-          Select a project to file crates into it (Unsorted unless a subproject
-          is selected).
-        </p>
-      ) : fileHint ? (
+      {fileHint ? (
         <p className="text-base text-slate-500">{fileHint}</p>
       ) : null}
+      <div className="relative w-72 max-w-full">
+        <MagnifyingGlass
+          size={18}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+        />
+        <input
+          value={filter}
+          onChange={(e) => onFilter(e.target.value)}
+          placeholder="Filter crates…"
+          className="w-full pl-10 pr-3 py-2 rounded-md bg-slate-800 border border-slate-600 text-slate-100 text-base"
+        />
+      </div>
+      <MarkerFilterBar
+        filters={markerFilters}
+        onChange={onMarkerFilters}
+        showSort
+      />
       {crates.length === 0 && (
         <p className="text-base text-slate-500">
-          All local crates are assigned to a project, or none have been pulled
-          yet. Use{" "}
+          Nothing in this view. Pull crates from{" "}
           <Link to="/search" className="text-sky-400 hover:underline">
             Search
           </Link>
-          .
+          , or switch All / Inbox / Project.
         </p>
       )}
       {gallery && crates.length > 0 && (
         <div style={galleryGridStyle(gallery)}>
-          {crates.map((crate) => (
-            <CrateCard
-              key={crate.id}
-              crate={crate}
-              gallery={gallery}
-              schema={schema}
-              to={`/crates/${crate.id}`}
-              state={{ backTo: "/", backLabel: "Data & Projects" }}
-              overlay={
-                canFile ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onFile(crate.id);
-                    }}
-                    className="px-2 py-0.5 rounded bg-sky-800 text-sky-50 text-xs"
-                  >
-                    File
-                  </button>
-                ) : null
-              }
-            />
-          ))}
+          {crates.map((crate) => {
+            const home = filed.get(crate.id);
+            return (
+              <CrateCard
+                key={crate.id}
+                crate={crate}
+                gallery={gallery}
+                schema={schema}
+                to={`/crates/${crate.id}`}
+                state={{ backTo: "/", backLabel: "Data & Projects" }}
+                overlay={
+                  home ? (
+                    <span className="inline-flex items-center gap-1">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-900/80 text-slate-300 text-[10px]">
+                        {home.title}
+                      </span>
+                      <button
+                        type="button"
+                        title="Unfile"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onUnfile(crate.id, home.subId);
+                        }}
+                        className="p-1 rounded bg-slate-900/80 text-rose-300"
+                      >
+                        <Trash size={14} />
+                      </button>
+                    </span>
+                  ) : canFile ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onFile(crate.id);
+                      }}
+                      className="px-2 py-0.5 rounded bg-sky-800 text-sky-50 text-xs"
+                    >
+                      File
+                    </button>
+                  ) : null
+                }
+              />
+            );
+          })}
         </div>
       )}
     </Paper>

@@ -100,9 +100,15 @@ def _register_bytes_asset(
     metadata: dict[str, Any],
     replace: bool,
 ) -> str:
-    """Register one external bytes asset. Returns created|updated|skipped."""
+    """Register one external bytes asset. Returns created|updated|skipped.
+
+    Unreadable paths (EACCES / ENOENT) return ``skipped`` instead of raising.
+    """
     data_uri = path.as_uri()
-    size = path.stat().st_size
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return "skipped"
     meta = {**metadata, "data_uri": data_uri, "size": size}
 
     if key in assets:
@@ -154,8 +160,12 @@ def register_dataset(
     *,
     replace: bool = True,
     skip_unchanged: bool = False,
+    register_files: bool = True,
 ) -> tuple[str, str]:
-    """Register one dataset container and its RO-Crate File assets in Tiled.
+    """Register one dataset container (and optionally File assets) in Tiled.
+
+    Facility use is metadata-only (``register_files=False``): Tiled is a query
+    front-end, not a file transport. File bytes stay on the crate HTTP routes.
 
     Returns (uuid, action) where action is registered|updated|skipped.
     """
@@ -190,6 +200,9 @@ def register_dataset(
         },
     )
 
+    if not register_files:
+        return uuid, ("updated" if existed else "registered")
+
     assets = _ensure_container(
         crate_node,
         ASSETS_KEY,
@@ -202,7 +215,14 @@ def register_dataset(
         file_id = node.get("@id")
         if not file_id:
             continue
-        path = resolve_crate_file(crate_dir, str(file_id))
+        try:
+            path = resolve_crate_file(crate_dir, str(file_id))
+        except OSError as exc:
+            print(
+                f"skip asset {uuid}: {file_id} ({exc})",
+                file=sys.stderr,
+            )
+            continue
         if path is None:
             continue
         registered_paths.add(path)
@@ -214,31 +234,45 @@ def register_dataset(
             "description": node.get("description"),
             "relative_path": crate_relative_path(crate_dir, path),
         }
-        _register_bytes_asset(
-            assets,
-            key=key,
-            path=path,
-            metadata={k: v for k, v in file_meta.items() if v is not None},
-            replace=replace,
-        )
-
-    # Sidecars sitting next to the crate (outside data/) — common layout.
-    for pattern in ("*_sidecar.json", "*sidecar*.json"):
-        for path in sorted(crate_dir.glob(pattern)):
-            if not path.is_file() or path in registered_paths:
-                continue
-            key = f"sidecar__{path.name}"
+        try:
             _register_bytes_asset(
                 assets,
                 key=key,
                 path=path,
-                metadata={
-                    "name": path.name,
-                    "encodingFormat": "application/json",
-                    "relative_path": path.name,
-                },
+                metadata={k: v for k, v in file_meta.items() if v is not None},
                 replace=replace,
             )
+        except OSError as exc:
+            print(
+                f"skip asset {uuid}: {file_id} ({exc})",
+                file=sys.stderr,
+            )
+
+    # Sidecars sitting next to the crate (outside data/) — common layout.
+    for pattern in ("*_sidecar.json", "*sidecar*.json"):
+        for path in sorted(crate_dir.glob(pattern)):
+            try:
+                readable = path.is_file()
+            except OSError:
+                readable = False
+            if not readable or path in registered_paths:
+                continue
+            key = f"sidecar__{path.name}"
+            try:
+                _register_bytes_asset(
+                    assets,
+                    key=key,
+                    path=path,
+                    metadata={
+                        "name": path.name,
+                        "encodingFormat": "application/json",
+                        "relative_path": path.name,
+                    },
+                    replace=replace,
+                )
+            except OSError as exc:
+                print(f"skip sidecar {uuid}: {path.name} ({exc})", file=sys.stderr)
+                continue
             registered_paths.add(path)
 
     return uuid, ("updated" if existed else "registered")
@@ -274,6 +308,7 @@ def ingest_datasets(
     limit: int | None = None,
     only_uuids: Collection[str] | None = None,
     skip_unchanged: bool = False,
+    register_files: bool = True,
     on_progress: ProgressCallback | None = None,
 ) -> dict[str, int]:
     counts: dict[str, int] = {
@@ -289,6 +324,7 @@ def ingest_datasets(
         limit=limit,
         only_uuids=only_uuids,
         skip_unchanged=skip_unchanged,
+        register_files=register_files,
     ):
         if on_progress is not None and event.get("phase") != "register_complete":
             on_progress(event)
@@ -305,6 +341,7 @@ def iter_ingest_datasets(
     limit: int | None = None,
     only_uuids: Collection[str] | None = None,
     skip_unchanged: bool = False,
+    register_files: bool = True,
 ) -> Iterator[dict[str, Any]]:
     """Yield register progress events; final event is phase=register_complete."""
     data_root = data_root.resolve()
@@ -335,6 +372,7 @@ def iter_ingest_datasets(
                 crate_dir,
                 replace=replace,
                 skip_unchanged=skip_unchanged,
+                register_files=register_files,
             )
             counts[action] = counts.get(action, 0) + 1
             print(f"tiled {action} {crate_dir.name}")
@@ -360,6 +398,7 @@ def ingest_via_app(
     limit: int | None = None,
     only_uuids: Collection[str] | None = None,
     skip_unchanged: bool = False,
+    register_files: bool = True,
     on_progress: ProgressCallback | None = None,
 ) -> dict[str, int]:
     """In-process Tiled ingest using Context.from_app (no running HTTP server)."""
@@ -373,6 +412,7 @@ def ingest_via_app(
         limit=limit,
         only_uuids=only_uuids,
         skip_unchanged=skip_unchanged,
+        register_files=register_files,
         on_progress=on_progress,
     )
 
@@ -386,6 +426,7 @@ def iter_ingest_via_app(
     limit: int | None = None,
     only_uuids: Collection[str] | None = None,
     skip_unchanged: bool = False,
+    register_files: bool = True,
 ) -> Iterator[dict[str, Any]]:
     """Like ingest_via_app, but yields progress events then register_complete."""
     key = api_key or os.environ.get("TILED_API_KEY")
@@ -398,4 +439,5 @@ def iter_ingest_via_app(
         limit=limit,
         only_uuids=only_uuids,
         skip_unchanged=skip_unchanged,
+        register_files=register_files,
     )

@@ -171,7 +171,7 @@ request:
       type: string
       description: "Space group (HM or number)"
     cutoff:
-      default: 5.0
+      default: 1.0
       user: true
       type: number
       description: "Root-distance cutoff (Å)"

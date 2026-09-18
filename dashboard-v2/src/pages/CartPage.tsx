@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Paper } from "@blueskyproject/finch";
 import {
@@ -31,21 +31,19 @@ import {
   buildAgentJobRequest,
   resolveSharedFields,
 } from "../lib/agentRequest";
-import { useBookSearchSync } from "../lib/bookContext";
+import { useBookSearchSync, writeBookContext } from "../lib/bookContext";
 import {
-  addToCart,
-  clearCart,
   getCartIds,
-  removeFromCart,
   replaceCart,
   subscribeCart,
 } from "../lib/crateCart";
-import { getPlotSelection, subscribePlotSelection } from "../lib/plotSelection";
 import {
   fetchPlacements,
   fetchProject,
+  fetchProjects,
 } from "../lib/projectBookApi";
-import { filterOrganizeUniverse, workflowFocusIds } from "../lib/organizeScope";
+import SubprojectTree from "../components/SubprojectTree";
+import { projectWorkIds } from "../lib/organizeScope";
 import { resolveDashboardUri } from "../lib/dashboardConfig";
 import { getFacilityUrl } from "../lib/facilityApi";
 import {
@@ -76,6 +74,7 @@ type BulkResult = {
 
 export default function CartPage() {
   const book = useBookSearchSync();
+  const [, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const agentUrl = getAgentUrl();
   const [cartIds, setCartIds] = useState(() => getCartIds());
@@ -92,12 +91,19 @@ export default function CartPage() {
   const [draftText, setDraftText] = useState<Record<string, string>>({});
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
   const [bulkResults, setBulkResults] = useState<BulkResult[]>([]);
-  const [selectionTick, setSelectionTick] = useState(0);
+  const syncedWorkKey = useRef<string>("");
 
-  useEffect(
-    () => subscribePlotSelection(() => setSelectionTick((n) => n + 1)),
-    [],
-  );
+  function selectProject(id: string, sub?: string) {
+    writeBookContext({
+      projectId: id,
+      subId: sub ?? null,
+      scope: "project",
+    });
+    const next = new URLSearchParams();
+    next.set("project", id);
+    if (sub) next.set("sub", sub);
+    setSearchParams(next, { replace: true });
+  }
 
   useEffect(() => {
     return subscribeCart(() => {
@@ -140,6 +146,10 @@ export default function CartPage() {
   const placementsQuery = useQuery({
     queryKey: ["project-book-placements"],
     queryFn: fetchPlacements,
+  });
+  const projectsQuery = useQuery({
+    queryKey: ["project-book-projects"],
+    queryFn: fetchProjects,
   });
   const projectQuery = useQuery({
     queryKey: ["project-book-project", book.projectId],
@@ -362,15 +372,7 @@ export default function CartPage() {
     },
   });
 
-  const universe = useMemo(
-    () =>
-      filterOrganizeUniverse(
-        cratesQuery.data ?? [],
-        placementsQuery.data?.placements ?? [],
-        book,
-      ),
-    [cratesQuery.data, placementsQuery.data, book],
-  );
+  const projects = projectsQuery.data?.projects ?? [];
   const projectIds = useMemo(() => {
     const ids = new Set<string>();
     for (const p of placementsQuery.data?.placements ?? []) {
@@ -381,32 +383,49 @@ export default function CartPage() {
   const selectedSub = projectQuery.data?.subprojects.find(
     (s) => s.id === book.subId,
   );
-  const focus = useMemo(
-    () =>
-      workflowFocusIds({
-        universeIds: universe.map((c) => c.id),
-        selectionIds: getPlotSelection().ids,
-        sub: selectedSub,
-        projectId: book.projectId,
-        projectIds,
-      }),
-    [universe, selectedSub, book.projectId, projectIds, selectionTick],
+  const work = useMemo(
+    () => projectWorkIds(selectedSub, projectIds),
+    [selectedSub, projectIds],
   );
-  const focusLabel =
-    focus.reason === "selection"
-      ? "current Organize selection"
-      : focus.reason === "subproject"
-        ? `subproject ${selectedSub?.title ?? ""}`
-        : focus.reason === "project"
-          ? `project ${projectQuery.data?.title ?? ""}`
-          : "";
+  const workKey = `${book.projectId ?? ""}|${book.subId ?? ""}|${work.ids.join(",")}`;
 
-  const items = cartIds.map((id) => ({
+  useEffect(() => {
+    if (!projectsQuery.isSuccess) return;
+    if (book.projectId && projects.some((p) => p.id === book.projectId)) return;
+    const first = projects[0];
+    if (first) selectProject(first.id);
+  }, [projectsQuery.isSuccess, projects, book.projectId]);
+
+  useEffect(() => {
+    if (!book.projectId) return;
+    if (!cratesQuery.isSuccess || !placementsQuery.isSuccess) return;
+    if (book.subId && !projectQuery.isSuccess) return;
+    if (syncedWorkKey.current === workKey) return;
+    syncedWorkKey.current = workKey;
+    replaceCart(work.ids, book.projectId);
+    setInputIds(new Set(work.ids));
+  }, [
+    workKey,
+    work.ids,
+    book.projectId,
+    book.subId,
+    cratesQuery.isSuccess,
+    placementsQuery.isSuccess,
+    projectQuery.isSuccess,
+  ]);
+
+  const workLabel = selectedSub
+    ? selectedSub.title
+    : projectQuery.data?.title ??
+      projects.find((p) => p.id === book.projectId)?.title ??
+      "this project";
+
+  const items = work.ids.map((id) => ({
     id,
     crate: cratesById.get(id) ?? { id, metadata: {} },
   }));
 
-  const hydratedCount = cartIds.filter((id) => cratesById.has(id)).length;
+  const hydratedCount = work.ids.filter((id) => cratesById.has(id)).length;
   const selectedCount = inputIds.size;
 
   const sharedMissing = sharedFields
@@ -423,7 +442,7 @@ export default function CartPage() {
   }
 
   function selectAllInputs() {
-    setInputIds(new Set(cartIds));
+    setInputIds(new Set(work.ids));
   }
 
   function clearInputs() {
@@ -453,27 +472,27 @@ export default function CartPage() {
         <div>
           <h1 className="inline-flex items-center gap-2 text-2xl font-semibold text-slate-100">
             <HardDrives size={28} />
-            Action queue
+            Work
             <span className="text-base font-normal text-slate-400">
-              ({cartIds.length})
+              ({work.ids.length})
             </span>
           </h1>
           <p className="mt-1 text-sm text-slate-400">
-            Queue is project-directed: load the current project, subproject, or
-            Organize selection, then run actions. Facility Pull stays on{" "}
+            Pick a project and optional subproject, then run actions on those
+            crates. Facility Pull stays on{" "}
             <Link to="/search" className="text-sky-400 hover:underline">
               Search
             </Link>
             .{" "}
             <span className="text-slate-500">
-              {hydratedCount}/{cartIds.length} stored locally
+              {hydratedCount}/{work.ids.length} stored locally
             </span>
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={cartIds.length === 0 || storeMutation.isPending}
+            disabled={work.ids.length === 0 || storeMutation.isPending}
             onClick={() => {
               setStoreMessage(null);
               setStoreProgress(null);
@@ -487,13 +506,13 @@ export default function CartPage() {
               : "Store to local Tiled"}
           </button>
           <Link
-            to="/workflow/export"
+            to="/work/export"
             className="rounded-md bg-sky-800 px-3 py-1.5 text-sm text-sky-100 no-underline hover:bg-sky-700"
           >
             Export
           </Link>
           <PushToNotesButton
-            crates={cartIds.map((id) => {
+            crates={work.ids.map((id) => {
               const crate = cratesById.get(id);
               const label =
                 (gallery && crate
@@ -503,24 +522,6 @@ export default function CartPage() {
             })}
             label="Push to notes"
           />
-          <button
-            type="button"
-            disabled={focus.ids.length === 0}
-            onClick={() => replaceCart(focus.ids)}
-            className="rounded-md bg-slate-700 px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-600 disabled:opacity-40"
-          >
-            {focus.ids.length
-              ? `Load ${focus.ids.length} from ${focusLabel || "project"}`
-              : "Load project crates"}
-          </button>
-          <button
-            type="button"
-            disabled={cartIds.length === 0}
-            onClick={() => clearCart()}
-            className="rounded-md bg-rose-900/70 px-3 py-1.5 text-sm text-rose-100 hover:bg-rose-800 disabled:opacity-40"
-          >
-            Clear queue
-          </button>
         </div>
       </div>
 
@@ -539,6 +540,62 @@ export default function CartPage() {
           {storeMessage}
         </p>
       )}
+
+      <Paper className="space-y-3 bg-slate-900/70 p-4">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+          Project
+        </h2>
+        <div className="flex flex-wrap gap-2">
+          {projects.map((p) => {
+            const active = p.id === book.projectId;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => selectProject(p.id)}
+                className={`min-w-0 rounded-lg border px-4 py-2.5 text-left ${
+                  active
+                    ? "border-sky-500 bg-sky-900/50 text-sky-50"
+                    : "border-slate-600 bg-slate-800 text-slate-100 hover:border-slate-400"
+                }`}
+              >
+                <div className="text-sm font-medium">{p.title}</div>
+                <div className="text-xs text-slate-400">
+                  {p.subproject_count ?? 0} sub · {p.crate_count ?? 0} crates
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        {projects.length === 0 && projectsQuery.isSuccess ? (
+          <p className="text-sm text-slate-400">
+            Create a project on{" "}
+            <Link to="/" className="text-sky-400 hover:underline">
+              Data &amp; Projects
+            </Link>
+            .
+          </p>
+        ) : null}
+        {projectQuery.data ? (
+          <div className="space-y-2">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+              Subproject
+            </h2>
+            <SubprojectTree
+              nodes={projectQuery.data.subprojects}
+              selectedId={book.subId}
+              onSelect={(id) => selectProject(projectQuery.data.id, id)}
+              projectTitle={projectQuery.data.title}
+              projectCrateCount={projectIds.size}
+              onSelectProject={() => selectProject(projectQuery.data.id)}
+            />
+            <p className="text-xs text-slate-500">
+              Showing {work.ids.length} crate
+              {work.ids.length === 1 ? "" : "s"} in {workLabel}
+            </p>
+          </div>
+        ) : null}
+      </Paper>
 
       {/* Action picker + shared params */}
       <div className="grid gap-3 lg:grid-cols-[minmax(16rem,22rem)_1fr]">
@@ -635,7 +692,7 @@ export default function CartPage() {
           <button
             type="button"
             onClick={selectAllInputs}
-            disabled={cartIds.length === 0}
+            disabled={work.ids.length === 0}
             className="rounded bg-slate-800 px-2 py-1 text-slate-300 hover:bg-slate-700 disabled:opacity-40"
           >
             Select all
@@ -699,13 +756,15 @@ export default function CartPage() {
         </Paper>
       ) : null}
 
-      {cartIds.length === 0 && (
+      {work.ids.length === 0 && (
         <Paper className="bg-slate-900/70 p-6 text-sm text-slate-400 space-y-3">
           {book.projectId ? (
             <p>
-              {focus.ids.length
-                ? `Action queue is empty. Load ${focus.ids.length} crate${focus.ids.length === 1 ? "" : "s"} from ${focusLabel || "this project"}, or brush on `
-                : "Action queue is empty. Brush on "}
+              No crates in {workLabel}. File them on{" "}
+              <Link to="/" className="text-sky-400 hover:underline">
+                Data &amp; Projects
+              </Link>{" "}
+              or assign a selection from{" "}
               <Link to="/organize" className="text-sky-400 hover:underline">
                 Organize
               </Link>
@@ -713,26 +772,17 @@ export default function CartPage() {
             </p>
           ) : (
             <p>
-              Select a project on{" "}
+              Select a project above, or create one on{" "}
               <Link to="/" className="text-sky-400 hover:underline">
                 Data &amp; Projects
-              </Link>{" "}
-              or Organize first.
+              </Link>
+              .
             </p>
-          )}
-          {focus.ids.length > 0 && (
-            <button
-              type="button"
-              onClick={() => addToCart(focus.ids)}
-              className="rounded-md bg-sky-800 px-3 py-1.5 text-sm text-sky-50 hover:bg-sky-700"
-            >
-              Load {focus.ids.length} from {focusLabel}
-            </button>
           )}
         </Paper>
       )}
 
-      {cratesQuery.isLoading && cartIds.length > 0 && (
+      {cratesQuery.isLoading && work.ids.length > 0 && (
         <p className="text-sm text-slate-400">Loading dataset metadata…</p>
       )}
 
@@ -747,52 +797,38 @@ export default function CartPage() {
                 gallery={gallery}
                 schema={schemaQuery.data}
                 to={`/crates/${id}`}
-                state={{ backTo: "/workflow/cart", backLabel: "Action queue" }}
+                state={{ backTo: "/work/run", backLabel: "Work" }}
                 className={
                   used
                     ? "ring-2 ring-teal-400/70 rounded-md"
                     : "opacity-80"
                 }
                 overlay={
-                  <div className="flex items-start gap-1">
-                    <button
-                      type="button"
-                      title={
-                        used
-                          ? "Selected as job input"
-                          : "Use this crate as job input"
-                      }
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        toggleInput(id);
-                      }}
-                      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide shadow-md ${
-                        used
-                          ? "bg-teal-600 text-white hover:bg-teal-500"
-                          : "bg-slate-900/95 text-slate-200 ring-1 ring-slate-500 hover:bg-slate-800"
-                      }`}
-                    >
-                      {used ? (
-                        <CheckSquare size={16} weight="fill" />
-                      ) : (
-                        <Square size={16} />
-                      )}
-                      {used ? "Input" : "Use as input"}
-                    </button>
-                    <button
-                      type="button"
-                      title="Remove from action queue"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        removeFromCart(id);
-                      }}
-                      className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-800/90 text-sm text-slate-300 hover:bg-rose-900 hover:text-rose-100"
-                    >
-                      ×
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    title={
+                      used
+                        ? "Selected as job input"
+                        : "Use this crate as job input"
+                    }
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      toggleInput(id);
+                    }}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide shadow-md ${
+                      used
+                        ? "bg-teal-600 text-white hover:bg-teal-500"
+                        : "bg-slate-900/95 text-slate-200 ring-1 ring-slate-500 hover:bg-slate-800"
+                    }`}
+                  >
+                    {used ? (
+                      <CheckSquare size={16} weight="fill" />
+                    ) : (
+                      <Square size={16} />
+                    )}
+                    {used ? "Input" : "Use as input"}
+                  </button>
                 }
               />
             );

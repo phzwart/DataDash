@@ -16,9 +16,9 @@ ingest:
   # Fallbacks after facility_url / options.crate_source_url (client_store hydrate API).
   crate_source_urls:
     - "http://127.0.0.1:8770"
-  # Prefer facility MyROCrates, then local client_store hydrate tree.
+  # Prefer JeanDaleCrates, then local client_store hydrate tree.
   local_crate_roots:
-    - "/nsls2/users/pzwart/Projects/MyROCrates"
+    - "/nsls2/users/pzwart/Projects/JeanDaleCrates"
     - "../client_store/data_root"
 
 jobs:
@@ -27,3 +27,5 @@ jobs:
   auto_kill_stale_jobs: false
   default_timeout_seconds: 3600
   progress_poll_seconds: 5
+  # How many agent subprocesses may run at once. Extra submits stay pending.
+  max_parallel: 4

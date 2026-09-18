@@ -308,12 +308,14 @@ function AffinityPanel({
       ) : null}
       <p className="text-[11px] text-slate-500 mb-1 leading-snug">
         {panel.caption ??
-          "Nearby points have similar sample codes (string distance, MDS)."}
+          "Nearby points have similar sample codes (string distance, MDS)."}{" "}
+        Scroll to zoom · Shift-drag to pan.
       </p>
       <VegaLiteView
         crates={points}
         layout={layout}
         fill
+        maxHeight={280}
         sourceId={sourceId}
         onSelectionChange={onSelect}
         compiledSpec={affinityToVegaSpec(panel)}
@@ -719,13 +721,13 @@ export default function PlotsPage() {
           <h1 className="text-2xl font-semibold text-slate-100">Organize</h1>
           <p className="text-sm text-slate-400 mt-1">
             Scope the store, brush plots ({book.combine.toUpperCase()}), then
-            assign or send to Workflow · {crates.length}
+            assign to a project and run on Work · {crates.length}
             {crates.length !== totalCrates ? ` of ${totalCrates}` : ""}{" "}
             datasets
           </p>
         </div>
         <Link
-          to="/workflow/selection"
+          to="/work/selection"
           className={`px-3 py-1.5 rounded-md text-sm no-underline shrink-0 ${
             selectionCount > 0
               ? "bg-sky-800/80 text-sky-100 hover:bg-sky-700"

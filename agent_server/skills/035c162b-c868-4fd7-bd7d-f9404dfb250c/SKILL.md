@@ -22,7 +22,7 @@ the HTTP service. Autofill of cell/sg is owned by the client via `request:`.
 |-----------|--------|---------------|
 | `cell` | `crate.summary.unit_cell` → `[a,b,c,α,β,γ]` | yes (confirm/override) |
 | `sg` | `crate.summary.space_group` | yes (confirm/override) |
-| `cutoff` | default `5.0` | yes |
+| `cutoff` | default `1.0` | yes |
 | `same_hm` | default `true` | yes |
 
 Assembled `$INPUT_DIR/parameters.json`:
@@ -31,7 +31,7 @@ Assembled `$INPUT_DIR/parameters.json`:
 {
   "cell": [70.2, 92.1, 189.5, 90, 90, 90],
   "sg": "P212121",
-  "cutoff": 5.0,
+  "cutoff": 1.0,
   "same_hm": true
 }
 ```
@@ -46,10 +46,11 @@ Assembled `$INPUT_DIR/parameters.json`:
 | `PDB_SEARCH_URL` | agentsg PDB search base URL (default / yaml: `http://127.0.0.1:8877`) |
 | `FACILITY_URL` | Injected; unused by this agent |
 
-Start the search service before jobs:
+Start the search service before jobs (also launched by repo-root `start_all.sh`):
 
 ```bash
-python -m agentsg.cell.pdb_server --db /path/to/pdb_cells.duckdb --port 8877
+# finds $HOME/Downloads/pdb_cells.duckdb or $PDB_CELLS_DB
+./agent_server/serve_pdb_search.sh
 ```
 
 ## Outputs under `$OUTPUT_DIR`

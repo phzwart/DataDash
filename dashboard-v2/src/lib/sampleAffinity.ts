@@ -160,6 +160,30 @@ export function classicalMds2d(dist: number[][]): [number, number][] {
   return B.map((_, i) => [ev1.vector[i] * s1, ev2.vector[i] * s2]);
 }
 
+function quantile(sorted: number[], q: number): number {
+  if (!sorted.length) return 0;
+  const i = Math.min(sorted.length - 1, Math.max(0, (sorted.length - 1) * q));
+  const lo = Math.floor(i);
+  const hi = Math.ceil(i);
+  const t = i - lo;
+  return sorted[lo] * (1 - t) + sorted[hi] * t;
+}
+
+/** Center on the dense cloud (5–95%) then tanh so outliers do not stretch the view. */
+export function compressMdsCoords(coords: [number, number][]): [number, number][] {
+  if (coords.length <= 1) return coords.map(() => [0, 0]);
+  const xs = coords.map((c) => c[0]).sort((a, b) => a - b);
+  const ys = coords.map((c) => c[1]).sort((a, b) => a - b);
+  const xMid = quantile(xs, 0.5);
+  const yMid = quantile(ys, 0.5);
+  const xSpan = Math.max(quantile(xs, 0.95) - quantile(xs, 0.05), 1e-9);
+  const ySpan = Math.max(quantile(ys, 0.95) - quantile(ys, 0.05), 1e-9);
+  return coords.map(([x, y]) => [
+    Math.tanh(((x - xMid) / xSpan) * 1.2),
+    Math.tanh(((y - yMid) / ySpan) * 1.2),
+  ]);
+}
+
 export function sampleAffinityCoords(
   labels: string[],
 ): [number, number][] {
@@ -169,5 +193,5 @@ export function sampleAffinityCoords(
       i === j ? 0 : sampleCodeDistance(labels[i], labels[j]),
     ),
   );
-  return classicalMds2d(dist);
+  return compressMdsCoords(classicalMds2d(dist));
 }

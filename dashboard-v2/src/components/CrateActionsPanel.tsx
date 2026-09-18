@@ -245,8 +245,8 @@ export default function CrateActionsPanel({
         </Paper>
       ) : !(jobsQuery.data?.length) ? (
         <Paper className="p-4 text-base text-slate-400">
-          No agent jobs yet for this crate. Run one from the{" "}
-          <span className="text-slate-300">Action queue</span>.
+          No agent jobs yet for this crate. Run one from{" "}
+          <span className="text-slate-300">Work</span>.
         </Paper>
       ) : (
         <div className="space-y-3">

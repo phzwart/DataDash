@@ -445,10 +445,10 @@ export default function ActionsPage() {
           <p className="mt-1.5 text-sm leading-relaxed text-slate-400">
             Choose an agent, pick a pin from the{" "}
             <Link
-              to="/workflow/cart"
+              to="/work/run"
               className="font-medium text-sky-400 hover:underline"
             >
-              action queue
+              Work
             </Link>
             , confirm parameters, then run.
           </p>
@@ -551,28 +551,21 @@ export default function ActionsPage() {
           <div className="space-y-2">
             <div className="flex flex-wrap items-end justify-between gap-2">
               <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-                2 · Pin from action queue
+                2 · Pin from Work
               </h2>
               <span className="text-xs text-slate-500">
-                {cartIds.length} in queue
+                {cartIds.length} in Work
               </span>
             </div>
 
             {cartIds.length === 0 ? (
               <Paper className="bg-amber-950/30 p-4 text-sm text-amber-100/90">
-                Queue is empty. Add pins from{" "}
+                No crates in the current project. Pick a project on{" "}
                 <Link
-                  to="/workflow/selection"
+                  to="/work/run"
                   className="text-sky-400 hover:underline"
                 >
-                  Selection
-                </Link>{" "}
-                or{" "}
-                <Link
-                  to="/workflow/cart"
-                  className="text-sky-400 hover:underline"
-                >
-                  Action queue
+                  Work
                 </Link>
                 .
               </Paper>

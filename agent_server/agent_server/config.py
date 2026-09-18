@@ -30,6 +30,7 @@ class JobsConfig:
     auto_kill_stale_jobs: bool = False
     default_timeout_seconds: int = 3600
     progress_poll_seconds: int = 5
+    max_parallel: int = 4
 
 
 @dataclass
@@ -156,5 +157,14 @@ def load_config(
                 jobs_raw.get("default_timeout_seconds", 3600)
             ),
             progress_poll_seconds=int(jobs_raw.get("progress_poll_seconds", 5)),
+            max_parallel=max(
+                1,
+                int(
+                    os.environ.get(
+                        "JOBS_MAX_PARALLEL",
+                        jobs_raw.get("max_parallel", 4),
+                    )
+                ),
+            ),
         ),
     )

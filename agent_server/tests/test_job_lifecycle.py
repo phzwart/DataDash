@@ -40,7 +40,7 @@ def app_env(tmp_path: Path):
     yield app, config, jobs_root, agent_data
 
 
-def _mock_resolve(agent, inputs, *, workspace, facility_url):
+def _mock_resolve(agent, inputs, *, workspace, facility_url, crate_source_url=None):
     input_dir = workspace / "input" / "crates" / "22222222-2222-4222-8222-222222222222"
     input_dir.mkdir(parents=True, exist_ok=True)
     crate = {
@@ -185,3 +185,44 @@ def test_cancel_job(app_env) -> None:
         shutil.copy(backup, agent.agent_dir / "run")
         backup.unlink(missing_ok=True)
         slow_run.unlink(missing_ok=True)
+
+
+def test_run_queue_caps_parallel(app_env) -> None:
+    import asyncio
+
+    app, _config, _jobs_root, _agent_data = app_env
+    worker = app.state.worker
+    worker.max_parallel = 1
+    worker._slots_started = False
+    worker._queue = None
+
+    current = 0
+    peak = 0
+    started: list[str] = []
+
+    class _Pending:
+        status = JobStatus.PENDING.value
+
+    worker.store.get_job = lambda _uid: _Pending()  # type: ignore[method-assign]
+
+    async def fake_run(job_uuid: str) -> None:
+        nonlocal current, peak
+        current += 1
+        peak = max(peak, current)
+        started.append(job_uuid)
+        await asyncio.sleep(0.12)
+        current -= 1
+
+    worker._run = fake_run  # type: ignore[method-assign]
+
+    async def main() -> None:
+        worker.start_pool()
+        worker.schedule("job-a")
+        worker.schedule("job-b")
+        worker.schedule("job-c")
+        assert worker._queue is not None
+        await worker._queue.join()
+
+    asyncio.run(main())
+    assert started == ["job-a", "job-b", "job-c"]
+    assert peak == 1

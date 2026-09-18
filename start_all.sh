@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Start local LAMBDA stack against TMP_LAMBDA data_root.
+# Start local LAMBDA stack against JeanDaleCrates (override with DATA_ROOT=).
 #
 # Run this in your own terminal (not an agent shell) so processes stay up:
 #   ./start_all.sh
 #   SKIP_DASHBOARD=1 ./start_all.sh
 #   ./start_all.sh --stop
 #
-# Ports: facility :8767, client_store :8770, agent :8780, dashboard :5175
+# Ports: facility :8767, client_store :8770, agent :8780,
+#        pdb_search :8877, dashboard :5175
 #set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -14,8 +15,10 @@ LOG_DIR="${LOG_DIR:-$ROOT/var/logs}"
 PID_DIR="${PID_DIR:-$ROOT/var/run}"
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
-export DATA_ROOT="${DATA_ROOT:-/Users/phzwart/Projects/TMP_LAMBDA/data_root}"
+export DATA_ROOT="${DATA_ROOT:-/nsls2/users/pzwart/Projects/JeanDaleCrates}"
 export TILED_API_KEY="${TILED_API_KEY:-secret}"
+FACILITY_INDEX_DB="${FACILITY_INDEX_DB:-$ROOT/server/var/facility_index.db}"
+CLIENT_FACILITY_DB="${CLIENT_FACILITY_DB:-$ROOT/client_store/var/facility_index.db}"
 
 FACILITY_HOST="${FACILITY_HOST:-127.0.0.1}"
 FACILITY_PORT="${FACILITY_PORT:-8767}"
@@ -23,7 +26,10 @@ CLIENT_HOST="${CLIENT_HOST:-127.0.0.1}"
 CLIENT_PORT="${CLIENT_PORT:-8770}"
 AGENT_HOST="${AGENT_HOST:-127.0.0.1}"
 AGENT_PORT="${AGENT_PORT:-8780}"
+PDB_SEARCH_HOST="${PDB_SEARCH_HOST:-127.0.0.1}"
+PDB_SEARCH_PORT="${PDB_SEARCH_PORT:-8877}"
 SKIP_DASHBOARD="${SKIP_DASHBOARD:-0}"
+export PDB_CELLS_DB PDB_SEARCH_HOST PDB_SEARCH_PORT
 
 SERVER_VENV="$ROOT/server/.venv/bin/python"
 
@@ -100,11 +106,13 @@ stop_one() {
 stop_all() {
   stop_one dashboard
   stop_one agent
+  stop_one pdb_search
   stop_one client
   stop_one facility
   kill_port "$FACILITY_PORT"
   kill_port "$CLIENT_PORT"
   kill_port "$AGENT_PORT"
+  kill_port "$PDB_SEARCH_PORT"
   kill_port 5175
   echo "stopped."
 }
@@ -123,7 +131,7 @@ launch() {
   : >"$logfile"
   (
     cd "$cwd"
-    export DATA_ROOT TILED_API_KEY
+    export DATA_ROOT TILED_API_KEY PDB_CELLS_DB PDB_SEARCH_HOST PDB_SEARCH_PORT FACILITY_DB
     exec nohup "$@"
   ) >>"$logfile" 2>&1 &
   disown $! 2>/dev/null || true
@@ -149,8 +157,15 @@ need_file "$ROOT/agent_server/.venv/bin/python"
 need_file "$ROOT/server/serve.sh"
 need_file "$ROOT/client_store/serve.sh"
 need_file "$ROOT/agent_server/serve.sh"
+need_file "$ROOT/agent_server/serve_pdb_search.sh"
 
 stop_all >/dev/null 2>&1 || true
+
+mkdir -p "$ROOT/server/var" "$ROOT/client_store/var"
+if [[ ! -e "$DATA_ROOT/schemas" ]]; then
+  ln -sfn "$ROOT/client_store/data_root/schemas" "$DATA_ROOT/schemas"
+  echo "linked $DATA_ROOT/schemas → client_store schemas"
+fi
 
 echo "DATA_ROOT=$DATA_ROOT"
 echo "logs → $LOG_DIR"
@@ -160,11 +175,12 @@ echo "starting facility :$FACILITY_PORT"
 launch facility --cwd "$ROOT/server" \
   "$SERVER_VENV" -m rocrate_tiled.app \
   --data-root "$DATA_ROOT" \
+  --db "$FACILITY_INDEX_DB" \
   --host "$FACILITY_HOST" \
   --port "$FACILITY_PORT"
 
 echo "starting client_store :$CLIENT_PORT"
-launch client --cwd "$ROOT/client_store" \
+FACILITY_DB="$CLIENT_FACILITY_DB" launch client --cwd "$ROOT/client_store" \
   "$SERVER_VENV" -m lambda_client_store.app \
   --data-root "$DATA_ROOT" \
   --config "$ROOT/client_store/config.yml" \
@@ -181,6 +197,10 @@ launch agent --cwd "$ROOT/agent_server" \
   --agent-data-root "$ROOT/agent_server/agent_data_root" \
   --skills-dir "$ROOT/agent_server/skills"
 
+echo "starting pdb_search :$PDB_SEARCH_PORT"
+launch pdb_search --cwd "$ROOT/agent_server" \
+  "$ROOT/agent_server/serve_pdb_search.sh"
+
 if [[ "$SKIP_DASHBOARD" != "1" ]] && [[ -f "$ROOT/dashboard-v2/package.json" ]]; then
   echo "starting dashboard-v2 (vite :5175)"
   launch dashboard --cwd "$ROOT/dashboard-v2" \
@@ -191,10 +211,11 @@ fi
 
 echo
 echo "waiting for health…"
-# Facility Tiled ingest of MyROCrates can take a couple of minutes.
-wait_http "http://$FACILITY_HOST:$FACILITY_PORT/api/v1/health" facility 300
-wait_http "http://$CLIENT_HOST:$CLIENT_PORT/api/v1/health" client 120
+# Facility / client Tiled ingest of a large crate tree can take several minutes.
+wait_http "http://$FACILITY_HOST:$FACILITY_PORT/api/v1/health" facility 900
+wait_http "http://$CLIENT_HOST:$CLIENT_PORT/api/v1/health" client 900
 wait_http "http://$AGENT_HOST:$AGENT_PORT/api/v1/agents" agent
+wait_http "http://$PDB_SEARCH_HOST:$PDB_SEARCH_PORT/health" pdb_search 180
 
 echo
 echo "running (localhost only):"
@@ -202,6 +223,7 @@ echo "  facility     http://$FACILITY_HOST:$FACILITY_PORT"
 echo "  search       curl http://$FACILITY_HOST:$FACILITY_PORT/api/v1/search"
 echo "  client_store http://$CLIENT_HOST:$CLIENT_PORT"
 echo "  agent_server http://$AGENT_HOST:$AGENT_PORT"
+echo "  pdb_search   http://$PDB_SEARCH_HOST:$PDB_SEARCH_PORT  (POST /search)"
 if [[ -f "$PID_DIR/dashboard.pid" ]]; then
   echo "  dashboard    http://127.0.0.1:5175"
 fi

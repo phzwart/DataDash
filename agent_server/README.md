@@ -9,6 +9,9 @@ workspaces, enforces RO-Crate output, and stages products for Tiled ingest.
 | **Data staging** | `agent_data_root/` | Output RO-Crates before Tiled ingest |
 | **Workspaces** | `jobs_root/{job_uuid}/` | Per-job input/work/output/logs |
 
+Bulk submits share a run queue (`jobs.max_parallel`, default 4). Extra jobs stay
+`pending` until a slot frees — they do not all spawn at once.
+
 ## Quick start
 
 ```bash

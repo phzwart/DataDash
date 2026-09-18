@@ -10,7 +10,6 @@ import MarkerFilterBar, {
 } from "../components/MarkerFilterBar";
 import PushToNotesButton from "../components/PushToNotesButton";
 import { useBookSearchSync } from "../lib/bookContext";
-import { addToCart, getCartIds, replaceCart, subscribeCart } from "../lib/crateCart";
 import {
   compareCratesByMarkers,
   filterCratesByMarkers,
@@ -37,7 +36,6 @@ import { fetchCrates, type CrateSummary } from "../lib/tiledCrates";
 export default function SelectionPage() {
   const book = useBookSearchSync();
   const [selection, setSelection] = useState(getPlotSelection);
-  const [cartCount, setCartCount] = useState(() => getCartIds().length);
   const [markerFilters, setMarkerFilters] = useState<MarkerFilters>({
     minStars: 0,
     colorTag: "any",
@@ -47,7 +45,6 @@ export default function SelectionPage() {
   const [, markerBump] = useState(0);
 
   useEffect(() => subscribePlotSelection(() => setSelection(getPlotSelection())), []);
-  useEffect(() => subscribeCart(() => setCartCount(getCartIds().length)), []);
   useEffect(() => subscribeCrateMarkers(() => markerBump((n) => n + 1)), []);
 
   const dashUriQuery = useQuery({
@@ -150,8 +147,8 @@ export default function SelectionPage() {
           </h1>
           <p className="text-sm text-slate-400 mt-1">
             Crates in the current Organize scope that are also in the session
-            selection. Assign them to a project or subproject, or send them to
-            this project&apos;s action queue.
+            selection. Assign them to a project or subproject, then run that
+            set on Work.
           </p>
           {selection.source && (
             <p className="text-xs text-slate-500 mt-1 font-mono">
@@ -171,26 +168,6 @@ export default function SelectionPage() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={filteredIds.length === 0}
-            onClick={() => addToCart(filteredIds)}
-            className="px-3 py-1.5 rounded-md bg-sky-700 text-slate-100 text-sm hover:bg-sky-600 disabled:opacity-40"
-          >
-            {markerFilterActive && filteredIds.length !== scopedIds.length
-              ? `Add ${filteredIds.length} to this project's queue`
-              : "Add to this project's queue"}
-          </button>
-          <button
-            type="button"
-            disabled={filteredIds.length === 0}
-            onClick={() => replaceCart(filteredIds)}
-            className="px-3 py-1.5 rounded-md bg-slate-700 text-slate-100 text-sm hover:bg-slate-600 disabled:opacity-40"
-          >
-            {markerFilterActive && filteredIds.length !== scopedIds.length
-              ? `Replace queue (${filteredIds.length})`
-              : "Replace this project's queue"}
-          </button>
-          <button
-            type="button"
             disabled={scopedIds.length === 0}
             onClick={() => clearPlotSelection()}
             className="px-3 py-1.5 rounded-md bg-slate-800 text-slate-300 text-sm hover:bg-slate-700 disabled:opacity-40"
@@ -198,10 +175,10 @@ export default function SelectionPage() {
             Clear selection
           </button>
           <Link
-            to="/workflow/cart"
+            to="/work/run"
             className="px-3 py-1.5 rounded-md bg-emerald-800/80 text-emerald-100 text-sm hover:bg-emerald-700 no-underline"
           >
-            Open action queue ({cartCount})
+            Open Work
           </Link>
           <PushToNotesButton
             crates={filteredIds.map((id) => {
@@ -256,7 +233,7 @@ export default function SelectionPage() {
               gallery={gallery}
               schema={schemaQuery.data}
               to={`/crates/${id}`}
-              state={{ backTo: "/workflow/selection", backLabel: "Selection" }}
+              state={{ backTo: "/work/selection", backLabel: "Selection" }}
               overlay={
                 <button
                   type="button"

@@ -42,7 +42,7 @@ request:
       type: string
       description: "Space group (Hermann–Mauguin or IT number) — autofilled from crate"
     cutoff:
-      default: 5.0
+      default: 1.0
       required: true
       user: true
       type: number

@@ -242,7 +242,7 @@ export function isCrateDependentBinding(binding: ParamBinding): boolean {
 
 /**
  * Parameters that are shared across a bulk run (not filled from crate metadata).
- * Shown once next to the agent picker on the action queue.
+ * Shown once next to the agent picker on Work.
  */
 export function sharedParamBindings(
   request: RequestSpec | null | undefined,

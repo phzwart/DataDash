@@ -356,7 +356,7 @@ export default function SetupPage() {
         <h1 className="text-xl font-semibold text-slate-100">Setup</h1>
         <p className="text-sm text-slate-400 mt-1">
           Local Tiled holds stored experiments. Facility URL is for search;
-          store selections or the action queue onto the local Tiled server.
+          store selections or the Work set onto the local Tiled server.
           Register the agent server to run skills/jobs against hydrated crates.
         </p>
       </div>

@@ -10,9 +10,8 @@ import {
 } from "../lib/cartExport";
 import { useBookSearchSync } from "../lib/bookContext";
 import { getCartIds, replaceCart, subscribeCart } from "../lib/crateCart";
-import { getPlotSelection, subscribePlotSelection } from "../lib/plotSelection";
 import { fetchPlacements, fetchProject } from "../lib/projectBookApi";
-import { filterOrganizeUniverse, workflowFocusIds } from "../lib/organizeScope";
+import { projectWorkIds } from "../lib/organizeScope";
 import { resolveDashboardUri } from "../lib/dashboardConfig";
 import { fetchDashboardConfig, type ExportProfile } from "../lib/schema";
 import { fetchCrates, shortId, type CrateSummary } from "../lib/tiledCrates";
@@ -20,7 +19,6 @@ import { fetchCrates, shortId, type CrateSummary } from "../lib/tiledCrates";
 export default function ExportPage() {
   const book = useBookSearchSync();
   const [cartIds, setCartIds] = useState(() => getCartIds());
-  const [selectionTick, setSelectionTick] = useState(0);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
@@ -28,10 +26,6 @@ export default function ExportPage() {
   const [lastOk, setLastOk] = useState<string | null>(null);
 
   useEffect(() => subscribeCart(() => setCartIds(getCartIds())), []);
-  useEffect(
-    () => subscribePlotSelection(() => setSelectionTick((n) => n + 1)),
-    [],
-  );
 
   const dashUriQuery = useQuery({
     queryKey: ["dashboard-uri-resolved"],
@@ -75,15 +69,6 @@ export default function ExportPage() {
   const profile: ExportProfile | null =
     profiles.find((p) => p.id === profileId) ?? null;
 
-  const universe = useMemo(
-    () =>
-      filterOrganizeUniverse(
-        cratesQuery.data ?? [],
-        placementsQuery.data?.placements ?? [],
-        book,
-      ),
-    [cratesQuery.data, placementsQuery.data, book],
-  );
   const projectIds = useMemo(() => {
     const ids = new Set<string>();
     for (const p of placementsQuery.data?.placements ?? []) {
@@ -94,17 +79,22 @@ export default function ExportPage() {
   const selectedSub = projectQuery.data?.subprojects.find(
     (s) => s.id === book.subId,
   );
-  const focus = useMemo(
-    () =>
-      workflowFocusIds({
-        universeIds: universe.map((c) => c.id),
-        selectionIds: getPlotSelection().ids,
-        sub: selectedSub,
-        projectId: book.projectId,
-        projectIds,
-      }),
-    [universe, selectedSub, book.projectId, projectIds, selectionTick],
+  const work = useMemo(
+    () => projectWorkIds(selectedSub, projectIds),
+    [selectedSub, projectIds],
   );
+
+  useEffect(() => {
+    if (!book.projectId || !placementsQuery.isSuccess) return;
+    if (book.subId && !projectQuery.isSuccess) return;
+    replaceCart(work.ids, book.projectId);
+  }, [
+    book.projectId,
+    book.subId,
+    work.ids,
+    placementsQuery.isSuccess,
+    projectQuery.isSuccess,
+  ]);
 
   const cartCrates: CrateSummary[] = useMemo(() => {
     const byId = new Map((cratesQuery.data ?? []).map((c) => [c.id, c]));
@@ -160,20 +150,21 @@ export default function ExportPage() {
             <DownloadSimple size={28} />
             Export
             <span className="text-base font-normal text-slate-400">
-              ({cartIds.length} in action queue)
+              ({cartIds.length} in Work)
             </span>
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Download action-queue datasets using profiles from the dashboard YAML{" "}
+            Download the current project or subproject crates using profiles
+            from the dashboard YAML{" "}
             <code className="text-slate-500">export:</code> section.
           </p>
         </div>
         <div className="flex gap-2">
           <Link
-            to="/workflow/cart"
+            to="/work/run"
             className="px-3 py-1.5 rounded-md bg-slate-700 text-slate-100 text-sm hover:bg-slate-600 no-underline"
           >
-            Open action queue
+            Back to Work
           </Link>
           <Link
             to="/setup"
@@ -200,33 +191,24 @@ export default function ExportPage() {
         <Paper className="p-6 text-slate-400 text-sm space-y-3">
           {book.projectId ? (
             <p>
-              Action queue is empty. Load crates from the selected project on{" "}
-              <Link to="/workflow/cart" className="text-sky-400 hover:underline">
-                Action queue
-              </Link>
-              , or brush on{" "}
-              <Link to="/organize" className="text-sky-400 hover:underline">
-                Organize
+              No crates in this project or subproject. File them on{" "}
+              <Link to="/" className="text-sky-400 hover:underline">
+                Data &amp; Projects
+              </Link>{" "}
+              or{" "}
+              <Link to="/work/run" className="text-sky-400 hover:underline">
+                Work
               </Link>
               .
             </p>
           ) : (
             <p>
               Select a project on{" "}
-              <Link to="/" className="text-sky-400 hover:underline">
-                Data &amp; Projects
+              <Link to="/work/run" className="text-sky-400 hover:underline">
+                Work
               </Link>{" "}
-              or Organize first.
+              first.
             </p>
-          )}
-          {focus.ids.length > 0 && (
-            <button
-              type="button"
-              onClick={() => replaceCart(focus.ids)}
-              className="rounded-md bg-sky-800 px-3 py-1.5 text-sm text-sky-50 hover:bg-sky-700"
-            >
-              Load {focus.ids.length} crate{focus.ids.length === 1 ? "" : "s"} into queue
-            </button>
           )}
         </Paper>
       )}

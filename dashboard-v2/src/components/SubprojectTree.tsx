@@ -4,6 +4,10 @@ type Props = {
   nodes: Subproject[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** When set, a “Whole project” chip selects every crate in the project. */
+  projectTitle?: string;
+  projectCrateCount?: number;
+  onSelectProject?: () => void;
   chipGap?: string;
   itemsPerRow?: number;
 };
@@ -77,21 +81,47 @@ export default function SubprojectTree({
   nodes,
   selectedId,
   onSelect,
+  projectTitle,
+  projectCrateCount,
+  onSelectProject,
   chipGap = "0.65rem",
   itemsPerRow = 3,
 }: Props) {
-  if (!nodes.length) {
+  if (!nodes.length && !onSelectProject) {
     return <p className="text-base text-slate-500">No subprojects yet.</p>;
   }
+  const wholeSelected = Boolean(onSelectProject) && !selectedId;
   return (
-    <NodeList
-      nodes={nodes}
-      parentId={null}
-      depth={0}
-      selectedId={selectedId}
-      onSelect={onSelect}
-      chipGap={chipGap}
-      itemsPerRow={itemsPerRow}
-    />
+    <div className="space-y-3">
+      {onSelectProject ? (
+        <button
+          type="button"
+          onClick={onSelectProject}
+          className={`inline-flex items-baseline gap-2 px-3.5 py-2.5 rounded-lg text-base ${
+            wholeSelected
+              ? "bg-sky-800/80 text-sky-50 ring-1 ring-sky-400/70"
+              : "bg-slate-800/80 text-slate-100 hover:bg-slate-700"
+          }`}
+        >
+          <span className="font-medium">
+            {projectTitle ? `All in ${projectTitle}` : "Whole project"}
+          </span>
+          <span className="text-sm text-slate-400">{projectCrateCount ?? 0}</span>
+        </button>
+      ) : null}
+      {nodes.length ? (
+        <NodeList
+          nodes={nodes}
+          parentId={null}
+          depth={0}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          chipGap={chipGap}
+          itemsPerRow={itemsPerRow}
+        />
+      ) : (
+        <p className="text-base text-slate-500">No subprojects yet.</p>
+      )}
+    </div>
   );
 }

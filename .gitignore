@@ -17,6 +17,7 @@ client_store/var/*.db
 client_store/var/*.db-*
 agent_server/var/jobs.db
 agent_server/var/jobs.db-*
+**/*.duckdb
 agent_server/jobs_root/
 agent_server/agent_data_root/
 

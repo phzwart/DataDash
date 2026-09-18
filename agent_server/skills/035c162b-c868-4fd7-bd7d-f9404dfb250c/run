@@ -12,6 +12,7 @@ set -euo pipefail
 
 PDB_SEARCH_URL="${PDB_SEARCH_URL:-http://127.0.0.1:8877}"
 export PDB_SEARCH_URL
+AGENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 INPUT_CRATE=""
 shopt -s nullglob
@@ -37,11 +38,29 @@ mkdir -p "$OUTPUT_DIR/data" "$WORKSPACE/work"
 
 if ! curl -fsS --max-time 5 "$PDB_SEARCH_URL/health" >/dev/null; then
   echo "PDB search server not reachable at $PDB_SEARCH_URL/health" >&2
-  echo "Start it with: python -m agentsg.cell.pdb_server --db <pdb_cells.duckdb> --port 8877" >&2
+  echo "Start it with: $AGENT_DIR/../../serve_pdb_search.sh  (or repo-root ./start_all.sh)" >&2
   exit 1
 fi
 
-python3 - <<'PY'
+# Host /usr/bin/python3 is often 3.6–3.8; list[str] annotations crash there.
+PY=""
+for cand in \
+  "$AGENT_DIR/../../.venv/bin/python" \
+  /nsls2/conda/envs/2025-3.0-py312-tiled/bin/python \
+  python3.12 python3.11 python3.10 python3; do
+  if [[ -x "$cand" ]] || command -v "$cand" >/dev/null 2>&1; then
+    PY="$cand"
+    break
+  fi
+done
+if [[ -z "$PY" ]]; then
+  echo "Need Python >=3.9 to run this agent" >&2
+  exit 1
+fi
+
+"$PY" - <<'PY'
+from __future__ import annotations
+
 import csv
 import json
 import os

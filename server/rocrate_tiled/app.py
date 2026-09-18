@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import threading
 from pathlib import Path
 
 import uvicorn
@@ -33,6 +34,22 @@ from rocrate_tiled.tiled_registry import ingest_via_app
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "config.yml"
 DEFAULT_DATA_ROOT = Path(__file__).resolve().parents[2] / "data_root"
+DEFAULT_TILED_API_KEY = "secret"
+
+
+def _ensure_tiled_api_key() -> str:
+    """Tiled 0.2 requires a purely alphanumeric single-user key."""
+    key = (os.environ.get("TILED_API_KEY") or "").strip()
+    if key.isalnum():
+        os.environ["TILED_API_KEY"] = key
+        return key
+    if key:
+        print(
+            f"TILED_API_KEY {key!r} is not alphanumeric; using {DEFAULT_TILED_API_KEY!r}",
+            file=sys.stderr,
+        )
+    os.environ["TILED_API_KEY"] = DEFAULT_TILED_API_KEY
+    return DEFAULT_TILED_API_KEY
 
 
 def _db_path(data_root: Path) -> Path:
@@ -75,17 +92,29 @@ def _mount_facility_routes(app, *, data_root: Path, db_path: Path) -> FacilityIn
         file=sys.stderr,
     )
 
-    tiled_stats = ingest_via_app(
-        app,
-        data_root,
-        api_key=os.environ.get("TILED_API_KEY"),
-        replace=True,
-    )
-    print(
-        f"Tiled registry: {tiled_stats['registered']} registered, "
-        f"{tiled_stats['errors']} errors",
-        file=sys.stderr,
-    )
+    def _ingest_tiled_metadata() -> None:
+        try:
+            tiled_stats = ingest_via_app(
+                app,
+                data_root,
+                api_key=os.environ.get("TILED_API_KEY"),
+                replace=True,
+                register_files=False,
+            )
+            print(
+                f"Tiled registry: {tiled_stats['registered']} registered, "
+                f"{tiled_stats['errors']} errors",
+                file=sys.stderr,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Tiled registry failed: {exc}", file=sys.stderr)
+
+    # Search uses the SQLite index. Do not block :8767 on Tiled container writes.
+    threading.Thread(
+        target=_ingest_tiled_metadata,
+        name="tiled-metadata-ingest",
+        daemon=True,
+    ).start()
 
     app.state.data_root = data_root
     app.state.db_path = db_path
@@ -125,6 +154,7 @@ def _mount_facility_routes(app, *, data_root: Path, db_path: Path) -> FacilityIn
             request.app.state.data_root,
             api_key=os.environ.get("TILED_API_KEY"),
             replace=True,
+            register_files=False,
         )
         return JSONResponse(
             {
@@ -206,6 +236,7 @@ def create_app(
 
         return create_standalone_app(data_root=data_root, db_path=resolved_db)
 
+    _ensure_tiled_api_key()
     config_path = (
         config_path or Path(os.environ.get("TILED_CONFIG", DEFAULT_CONFIG))
     ).resolve()
@@ -285,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
         db_path=db_path,
         use_tiled=not args.no_tiled,
     )
-    api_key = (os.environ.get("TILED_API_KEY") or "").strip() or "secret"
+    api_key = _ensure_tiled_api_key()
     print(f"DATA_ROOT: {data_root}", file=sys.stderr)
     print(f"Index DB:  {db_path}", file=sys.stderr)
     if not args.no_tiled:
@@ -294,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         print(
-            f"Tiled tree: /crates/{{uuid}}/assets/{{rocrate_file_key}}",
+            "Tiled tree: /crates/{uuid}  (metadata only; files via /api/v1/experiments)",
             file=sys.stderr,
         )
     print(f"Search:    http://{args.host}:{args.port}/api/v1/search", file=sys.stderr)

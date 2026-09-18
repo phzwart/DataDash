@@ -43,12 +43,22 @@ def normalize_relative_path(file_id: str) -> str:
     return rel
 
 
+def _is_readable_file(path: Path) -> bool:
+    """True if path is a regular file we can stat. Permission errors are False."""
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 def resolve_crate_file(crate_dir: Path, file_id: str) -> Path | None:
     """Resolve a RO-Crate File @id to an on-disk path.
 
     Supports TMP_LAMBDA-style absolute ``@id`` values (preferred when the file
     exists), relative ids under ``crate_dir/data`` or ``crate_dir``, and a
     basename fallback after hydrate/copy when the absolute path is stale.
+    Unreadable beamline paths (EACCES) are treated as missing so metadata-only
+    crates still register.
     """
     fid = (file_id or "").strip()
     if not fid:
@@ -58,13 +68,13 @@ def resolve_crate_file(crate_dir: Path, file_id: str) -> Path | None:
     path = Path(fid)
 
     if path.is_absolute():
-        if path.is_file():
+        if _is_readable_file(path):
             return path.resolve()
         for candidate in (
             crate_dir / DATA_SUBDIR / path.name,
             crate_dir / path.name,
         ):
-            if candidate.is_file():
+            if _is_readable_file(candidate):
                 return candidate.resolve()
         return None
 
@@ -79,7 +89,7 @@ def resolve_crate_file(crate_dir: Path, file_id: str) -> Path | None:
         crate_dir / DATA_SUBDIR / Path(rel).name,
         crate_dir / Path(rel).name,
     ):
-        if candidate.is_file():
+        if _is_readable_file(candidate):
             return candidate.resolve()
     return None
 

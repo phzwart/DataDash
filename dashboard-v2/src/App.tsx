@@ -8,6 +8,7 @@ import {
 } from "@blueskyproject/finch";
 import {
   ChartBar,
+  FileText,
   FlowArrow,
   Gear,
   MagnifyingGlass,
@@ -16,6 +17,7 @@ import {
 import CratesPage from "./pages/CratesPage";
 import CrateDetailPage from "./pages/CrateDetailPage";
 import PlotsPage from "./pages/PlotsPage";
+import ReportPage from "./pages/ReportPage";
 import SetupPage from "./pages/SetupPage";
 import SearchPage from "./pages/SearchPage";
 import CartPage from "./pages/CartPage";
@@ -55,20 +57,21 @@ const navRoutes: RouteItem[] = [
     isBackgroundTransparent: true,
   },
   {
-    path: "/workflow",
-    label: "Workflow",
+    path: "/report",
+    label: "Report",
+    element: <ReportPage />,
+    icon: <FileText size={28} />,
+    isBackgroundTransparent: true,
+  },
+  {
+    path: "/work",
+    label: "Work",
     icon: <FlowArrow size={28} />,
     isBackgroundTransparent: true,
     tabs: [
       {
-        path: "selection",
-        label: "Selection",
-        element: <SelectionPage />,
-        isBackgroundTransparent: true,
-      },
-      {
-        path: "cart",
-        label: "Action queue",
+        path: "run",
+        label: "Run",
         element: <CartPage />,
         isBackgroundTransparent: true,
       },
@@ -150,33 +153,63 @@ const hiddenRoutes: RouteItem[] = [
     isBackgroundTransparent: true,
   },
   {
+    path: "/work/selection",
+    label: "Selection",
+    element: <SelectionPage />,
+    isBackgroundTransparent: true,
+  },
+  {
     path: "/selection",
     label: "Selection",
-    element: <RouteRedirect to="/workflow/selection" />,
+    element: <RouteRedirect to="/work/selection" />,
     isBackgroundTransparent: true,
   },
   {
     path: "/cart",
-    label: "Action queue",
-    element: <RouteRedirect to="/workflow/cart" />,
+    label: "Work",
+    element: <RouteRedirect to="/work/run" />,
     isBackgroundTransparent: true,
   },
   {
     path: "/export",
     label: "Export",
-    element: <RouteRedirect to="/workflow/export" />,
+    element: <RouteRedirect to="/work/export" />,
     isBackgroundTransparent: true,
   },
   {
     path: "/actions",
-    label: "Actions",
-    element: <RouteRedirect to="/workflow/cart" />,
+    label: "Work",
+    element: <RouteRedirect to="/work/run" />,
+    isBackgroundTransparent: true,
+  },
+  {
+    path: "/workflow",
+    label: "Work",
+    element: <RouteRedirect to="/work/run" />,
+    isBackgroundTransparent: true,
+  },
+  {
+    path: "/workflow/cart",
+    label: "Work",
+    element: <RouteRedirect to="/work/run" />,
+    isBackgroundTransparent: true,
+  },
+  {
+    path: "/workflow/selection",
+    label: "Selection",
+    element: <RouteRedirect to="/work/selection" />,
+    isBackgroundTransparent: true,
+  },
+  {
+    path: "/workflow/export",
+    label: "Export",
+    element: <RouteRedirect to="/work/export" />,
     isBackgroundTransparent: true,
   },
   {
     path: "/workflow/actions",
-    label: "Actions",
-    element: <RouteRedirect to="/workflow/cart" />,
+    label: "Work",
+    element: <RouteRedirect to="/work/run" />,
     isBackgroundTransparent: true,
   },
 ];

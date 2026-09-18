@@ -127,14 +127,28 @@ export async function facilitySearch(
     }
   }
   const url = `${base}/api/v1/search${qs.toString() ? `?${qs}` : ""}`;
-  const res = await fetch(url);
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Facility search is not reachable (${detail}). Is the facility server up?`,
+    );
+  }
   if (!res.ok) {
     let message = `Search failed (${res.status})`;
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      message = "Facility search is not up yet — wait for the index, then retry.";
+    }
     try {
       const err = (await res.json()) as { message?: string };
       if (err.message) message = err.message;
     } catch {
-      /* ignore */
+      if (res.status === 500) {
+        message =
+          "Facility search is not up yet (proxy 500). Wait until :8767 is listening, then retry.";
+      }
     }
     throw new Error(message);
   }

@@ -291,6 +291,51 @@ aside.bg-sky-950 > div:has(a[href="/schemas"]),
 aside.bg-sky-950 > div:has(a[href="/browse"]),
 aside.bg-sky-950 > div:has(a[href="/selection"]),
 aside.bg-sky-950 > div:has(a[href="/cart"]),
-aside.bg-sky-950 > div:has(a[href="/export"]) {
+aside.bg-sky-950 > div:has(a[href="/export"]),
+aside.bg-sky-950 > div:has(a[href="/work/selection"]),
+aside.bg-sky-950 > div:has(a[href="/workflow"]) {
   display: none;
+}
+
+.report-consensus-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.report-consensus-table th,
+.report-consensus-table td {
+  padding: 0.6rem 0.85rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #1e293b;
+}
+
+.report-consensus-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 600;
+  color: #cbd5e1;
+  background: #0f172a;
+  white-space: nowrap;
+  border-bottom: 1px solid #475569;
+}
+
+.report-consensus-table tbody tr.report-consensus-group td {
+  border-top: 1px solid #475569;
+  padding-top: 0.85rem;
+}
+
+.report-consensus-table .pdb-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.report-consensus-table .unit-cell,
+.report-consensus-table .delta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
